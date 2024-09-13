@@ -645,7 +645,7 @@ class Trainer:
                 if self.previous_time is None:
                     self.previous_time = current_time
                 else:
-                    wandb.log({"per iteration time": current_time-self.previous_time}, step=self.step)
+                    self.accelerator.log({"per iteration time": current_time-self.previous_time}, step=self.step)
                     self.previous_time = current_time
 
             self.step += 1
