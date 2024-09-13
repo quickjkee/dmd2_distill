@@ -343,6 +343,9 @@ class Trainer:
         self.model.train()
 
         accelerator = self.accelerator
+        if accelerator.is_main_process:
+            tracker_config = dict(vars(self.args))
+            accelerator.init_trackers('dmd2', config=tracker_config)
 
         # Data sampling
         ##############################################################################
