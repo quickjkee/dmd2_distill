@@ -120,11 +120,13 @@ class Trainer:
             self.uncond_embedding = self.model.text_encoder(uncond_input_ids)[0]
 
             # also load the training dataset images, this will be useful for GAN loss 
-            real_dataset = SDImageDatasetLMDB(
-                args.real_image_path, 
-                is_sdxl=False,
-                tokenizer_one=tokenizer
-            )
+            real_dataset = dataset
+            # TODO: REMOVE WHEN THE DATA WILL BE PREPARED
+            #SDImageDatasetLMDB(
+            #    args.real_image_path,
+            #    is_sdxl=False,
+            #    tokenizer_one=tokenizer
+            #)
         ########################################################
 
         # Dataloader
