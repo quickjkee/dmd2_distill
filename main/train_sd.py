@@ -163,6 +163,8 @@ class Trainer:
             self.denoising_dataloader = cycle(denoising_dataloader)
         ########################################################
 
+        # fsdp utils
+        ########################################################
         self.fsdp = args.fsdp
         if self.fsdp and (args.ckpt_only_path is None):
             # in fsdp hybrid_shard case, parameters initialized on different nodes may have different values
@@ -190,6 +192,7 @@ class Trainer:
             self.model.feedforward_model, self.model.guidance_model = accelerator.prepare(
                 self.model.feedforward_model, self.model.guidance_model
             )
+        ########################################################
 
         # Optimizer
         ########################################################
@@ -340,7 +343,7 @@ class Trainer:
         accelerator = self.accelerator
 
         # Data sampling
-        ########################################################
+        ##############################################################################
         # 4 channel for SD-VAE, please adapt for other autoencoders 
         noise = torch.randn(self.batch_size, self.latent_channel, self.latent_resolution, self.latent_resolution, device=accelerator.device)
         visual = self.step % self.wandb_iters == 0
@@ -367,9 +370,10 @@ class Trainer:
             real_train_dict = next(self.real_dataloader) 
         else:
             real_train_dict = None
-        ########################################################
+        ##############################################################################
 
-        # generate images and optionaly compute the generator gradient
+        # Generator sampling/updating
+        ##############################################################################
         generator_loss_dict, generator_log_dict = self.model(
             noise, text_embedding, uncond_embedding, 
             visual=visual, denoising_dict=denoising_dict,
@@ -399,8 +403,10 @@ class Trainer:
             self.optimizer_guidance.zero_grad()
 
         self.scheduler_generator.step()
+        ##############################################################################
 
-        # update the guidance model (dfake and classifier)
+        # Fake diffusion and classifier updating
+        ##############################################################################
         guidance_loss_dict, guidance_log_dict = self.model(
             noise, text_embedding, uncond_embedding, 
             visual=visual, denoising_dict=denoising_dict,
@@ -424,8 +430,10 @@ class Trainer:
         self.optimizer_guidance.zero_grad()
         self.optimizer_generator.zero_grad() # zero out the generator's gradient as well
         self.scheduler_guidance.step()
+        ##############################################################################
 
-        # combine the two dictionaries 
+        # Logging
+        ##############################################################################
         loss_dict = {**generator_loss_dict, **guidance_loss_dict}
         log_dict = {**generator_log_dict, **guidance_log_dict}
 
@@ -502,8 +510,11 @@ class Trainer:
                 wandb_loss_dict,
                 step=self.step
             )
+        ##############################################################################
 
         # TODO: Rewrite
+        # Eval
+        ##############################################################################
         """
         if visual:
             if not self.args.gan_alone:
