@@ -8,6 +8,7 @@ from diffusers.optimization import get_scheduler
 from main.utils import SDTextDataset, cycle 
 from main.sd_unified_model import SDUniModel
 from accelerate.utils import set_seed
+from accelerate.logging import get_logger
 from accelerate import Accelerator
 from torch.distributed.fsdp import (
     FullyShardedDataParallel as FSDP,
@@ -17,11 +18,13 @@ from torch.distributed.fsdp import (
 from pathlib import Path
 import argparse 
 import shutil 
-import wandb 
+import wandb
+import logging
 import torch 
 import time 
 import os
 
+logger = get_logger(__name__)
 
 # Trainer class
 # ----------------------------------------------------------------------------------------------------------------------
@@ -47,6 +50,12 @@ class Trainer:
             kwargs_handlers=None,
             dispatch_batches=False
         )
+        logging.basicConfig(
+            format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
+            datefmt="%m/%d/%Y %H:%M:%S",
+            level=logging.INFO,
+        )
+        logger.info(accelerator.state, main_process_only=False)
         set_seed(args.seed + accelerator.process_index)
 
         if accelerator.is_main_process:
@@ -515,6 +524,7 @@ class Trainer:
                 wandb_loss_dict,
                 step=self.step
             )
+            logger.info(f"loss {loss_dict['loss_dm'].detach().item()}")
         ##############################################################################
 
         # TODO: Rewrite
@@ -630,6 +640,7 @@ class Trainer:
         """
         
         self.accelerator.wait_for_everyone()
+        ##############################################################################
     # ------------------------------------------------------------------------------------------------------
 
     # ------------------------------------------------------------------------------------------------------
