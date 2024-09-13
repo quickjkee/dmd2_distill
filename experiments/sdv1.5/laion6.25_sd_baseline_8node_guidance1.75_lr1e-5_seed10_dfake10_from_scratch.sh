@@ -3,7 +3,7 @@ export WANDB_ENTITY=$2
 export WANDB_PROJECT=$3
 export MASTER_IP=$4
 
-torchrun --nnodes 8 --nproc_per_node=8 --rdzv_id=2345 \
+torchrun --nnodes 1 --nproc_per_node=8 --rdzv_id=2345 \
     --rdzv_backend=c10d \
     --rdzv_endpoint=$MASTER_IP main/train_sd.py \
     --generator_lr 1e-5  \
@@ -19,7 +19,7 @@ torchrun --nnodes 8 --nproc_per_node=8 --rdzv_id=2345 \
     --real_guidance_scale 1.75 \
     --fake_guidance_scale 1.0 \
     --max_grad_norm 10.0 \
-    --model_id "runwayml/stable-diffusion-v1-5" \
+    --model_id "sd-v1-5" \
     --train_prompt_path $CHECKPOINT_PATH/captions_laion_score6.25.pkl \
     --wandb_iters 50 \
     --wandb_entity $WANDB_ENTITY \

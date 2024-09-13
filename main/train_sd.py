@@ -21,10 +21,18 @@ import torch
 import time 
 import os
 
+
+# Trainer class
+# ----------------------------------------------------------------------------------------------------------------------
 class Trainer:
+
+    # Init
+    # ------------------------------------------------------------------------------------------------------
     def __init__(self, args):
         self.args = args
 
+        # Utils
+        ########################################################
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True 
 
@@ -38,8 +46,6 @@ class Trainer:
             dispatch_batches=False
         )
         set_seed(args.seed + accelerator.process_index)
-
-        print(accelerator.state)
 
         if accelerator.is_main_process:
             output_path = os.path.join(args.output_path, f"time_{int(time.time())}_seed{args.seed}")
@@ -58,7 +64,10 @@ class Trainer:
             print(f"run dir: {run.dir}")
             self.wandb_folder = run.dir
             os.makedirs(self.wandb_folder, exist_ok=True)
+        ########################################################
 
+        # Models and datasets
+        ########################################################
         self.model = SDUniModel(args, accelerator)
         self.max_grad_norm = args.max_grad_norm
         self.denoising = args.denoising
@@ -124,7 +133,10 @@ class Trainer:
                 is_sdxl=False,
                 tokenizer_one=tokenizer
             )
+        ########################################################
 
+        # Dataloader
+        ########################################################
         dataloader = torch.utils.data.DataLoader(dataset, batch_size=args.batch_size, shuffle=True, drop_last=True)
         dataloader = accelerator.prepare(dataloader)
         self.dataloader = cycle(dataloader)
@@ -143,8 +155,7 @@ class Trainer:
         guidance_dataloader = accelerator.prepare(guidance_dataloader)
         self.guidance_dataloader = cycle(guidance_dataloader)
 
-        self.guidance_cls_loss_weight = args.guidance_cls_loss_weight 
-
+        self.guidance_cls_loss_weight = args.guidance_cls_loss_weight
         self.cls_on_clean_image = args.cls_on_clean_image 
         self.gen_cls_loss = args.gen_cls_loss 
         self.gen_cls_loss_weight = args.gen_cls_loss_weight 
@@ -158,9 +169,9 @@ class Trainer:
             )
             denoising_dataloader = accelerator.prepare(denoising_dataloader)
             self.denoising_dataloader = cycle(denoising_dataloader)
+        ########################################################
 
-        self.fsdp = args.fsdp 
-
+        self.fsdp = args.fsdp
         if self.fsdp and (args.ckpt_only_path is None):
             # in fsdp hybrid_shard case, parameters initialized on different nodes may have different values
             # to fix this, we first save the checkpoint in the main process and reload it 
@@ -188,6 +199,8 @@ class Trainer:
                 self.model.feedforward_model, self.model.guidance_model
             )
 
+        # Optimizer
+        ########################################################
         self.optimizer_generator = torch.optim.AdamW(
             [param for param in self.model.feedforward_model.parameters() if param.requires_grad], 
             lr=args.generator_lr, 
@@ -231,7 +244,8 @@ class Trainer:
             ) = accelerator.prepare(
                 self.model.feedforward_model, self.model.guidance_model, self.optimizer_generator, 
                 self.optimizer_guidance, self.scheduler_generator, self.scheduler_guidance
-            ) 
+            )
+        ########################################################
 
         self.accelerator = accelerator
         self.train_iters = args.train_iters
@@ -251,7 +265,9 @@ class Trainer:
 
         if args.checkpoint_path is not None:
             self.load(args.checkpoint_path)
+    # ------------------------------------------------------------------------------------------------------
 
+    # ------------------------------------------------------------------------------------------------------
     def fsdp_state_dict(self, model):
         fsdp_fullstate_save_policy = FullStateDictConfig(
             offload_to_cpu=True, rank0_only=True
@@ -261,14 +277,18 @@ class Trainer:
         ):
             checkpoint = model.state_dict()
 
-        return checkpoint 
+        return checkpoint
+    # ------------------------------------------------------------------------------------------------------
 
+    # ------------------------------------------------------------------------------------------------------
     def load(self, checkpoint_path):
         # this is used for non-fsdp models.
         self.step = int(checkpoint_path.replace("/", "").split("_")[-1])
         print(self.accelerator.load_state(checkpoint_path, strict=False))
         self.accelerator.print(f"Loaded checkpoint from {checkpoint_path}")
+    # ------------------------------------------------------------------------------------------------------
 
+    # ------------------------------------------------------------------------------------------------------
     def save(self):
         # NOTE: we save the checkpoints to two places 
         # 1. output_path: save the latest one, this is assumed to be a permanent storage
@@ -318,12 +338,17 @@ class Trainer:
                     shutil.rmtree(os.path.join(self.cache_dir, folder))
             print("done saving")
         torch.cuda.empty_cache()
+    # ------------------------------------------------------------------------------------------------------
 
+    # Training fn
+    # ------------------------------------------------------------------------------------------------------
     def train_one_step(self):
         self.model.train()
 
         accelerator = self.accelerator
 
+        #
+        ########################################################
         # 4 channel for SD-VAE, please adapt for other autoencoders 
         noise = torch.randn(self.batch_size, self.latent_channel, self.latent_resolution, self.latent_resolution, device=accelerator.device)
         visual = self.step % self.wandb_iters == 0
@@ -350,6 +375,7 @@ class Trainer:
             real_train_dict = next(self.real_dataloader) 
         else:
             real_train_dict = None
+        ########################################################
 
         # generate images and optionaly compute the generator gradient
         generator_loss_dict, generator_log_dict = self.model(
@@ -593,7 +619,9 @@ class Trainer:
                 )
         
         self.accelerator.wait_for_everyone()
+    # ------------------------------------------------------------------------------------------------------
 
+    # ------------------------------------------------------------------------------------------------------
     def train(self):
         for index in range(self.step, self.train_iters):                
             self.train_one_step()
@@ -610,7 +638,10 @@ class Trainer:
                     self.previous_time = current_time
 
             self.step += 1
+    # ------------------------------------------------------------------------------------------------------
 
+# Arguments
+# ----------------------------------------------------------------------------------------------------------------------
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model_id", type=str, default="runwayml/stable-diffusion-v1-5")
@@ -692,11 +723,15 @@ def parse_args():
 
     assert args.wandb_iters % args.dfake_gen_update_ratio == 0, "wandb_iters should be a multiple of dfake_gen_update_ratio"
 
-    return args 
+    return args
+# ----------------------------------------------------------------------------------------------------------------------
 
+# Running
+# ----------------------------------------------------------------------------------------------------------------------
 if __name__ == "__main__":
     args = parse_args()
 
     trainer = Trainer(args)
 
     trainer.train()
+# ----------------------------------------------------------------------------------------------------------------------
