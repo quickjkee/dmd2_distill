@@ -58,7 +58,7 @@ class Trainer:
 
             os.makedirs(args.log_path, exist_ok=True)
 
-            run = wandb.init(config=args, dir=args.log_path, **{"mode": "online", "entity": args.wandb_entity, "project": args.wandb_project})
+            run = wandb.init(config=args, dir=args.log_path)
             wandb.run.log_code(".")
             wandb.run.name = args.wandb_name
             print(f"run dir: {run.dir}")
