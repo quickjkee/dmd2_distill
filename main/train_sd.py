@@ -674,7 +674,7 @@ def parse_args():
     parser.add_argument("--fake_guidance_scale", type=float, default=1.0)
     parser.add_argument("--grid_size", type=int, default=2)
     parser.add_argument("--no_save", action="store_true", help="don't save ckpt for debugging only")
-    parser.add_argument("--cache_dir", type=str, default="/mnt/localssd/cache")
+    parser.add_argument("--cache_dir", type=str, default="cache")
     parser.add_argument("--log_loss", action="store_true", help="log loss at every iteration")
     parser.add_argument("--num_workers", type=int, default=12)
     parser.add_argument("--latent_channel", type=int, default=4)
