@@ -646,7 +646,7 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model_id", type=str, default="runwayml/stable-diffusion-v1-5")
     parser.add_argument("--output_path", type=str, default="/mnt/localssd/test_stable_diffusion_coco")
-    parser.add_argument("--log_path", type=str, default="/mnt/localssd/log_stable_diffusion_coco")
+    parser.add_argument("--log_path", type=str, default="log_stable_diffusion_coco")
     parser.add_argument("--train_iters", type=int, default=1000000)
     parser.add_argument("--log_iters", type=int, default=100)
     parser.add_argument("--batch_size", type=int, default=1)
