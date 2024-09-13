@@ -14,6 +14,7 @@ from torch.distributed.fsdp import (
     FullStateDictConfig,
     StateDictType
 )
+from pathlib import Path
 import argparse 
 import shutil 
 import wandb 
@@ -36,7 +37,8 @@ class Trainer:
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True 
 
-        accelerator_project_config = ProjectConfiguration(logging_dir=args.log_path)
+        log_path = Path(args.output_path, args.log_path)
+        accelerator_project_config = ProjectConfiguration(logging_dir=log_path)
         accelerator = Accelerator(
             gradient_accumulation_steps=args.gradient_accumulation_steps,
             mixed_precision="no",
@@ -50,20 +52,10 @@ class Trainer:
         if accelerator.is_main_process:
             output_path = os.path.join(args.output_path, f"time_{int(time.time())}_seed{args.seed}")
             os.makedirs(output_path, exist_ok=False)
-
             self.cache_dir = os.path.join(args.cache_dir, f"time_{int(time.time())}_seed{args.seed}")
             os.makedirs(self.cache_dir, exist_ok=False)
-
             self.output_path = output_path
-
-            os.makedirs(args.log_path, exist_ok=True)
-
-            #run = wandb.init(config=args, dir=args.log_path)
-            #wandb.run.log_code(".")
-            #wandb.run.name = args.wandb_name
-            #print(f"run dir: {run.dir}")
-            #self.wandb_folder = run.dir
-            #os.makedirs(self.wandb_folder, exist_ok=True)
+            os.makedirs(log_path, exist_ok=True)
         ########################################################
 
         # Models and datasets
@@ -347,7 +339,7 @@ class Trainer:
 
         accelerator = self.accelerator
 
-        #
+        # Data sampling
         ########################################################
         # 4 channel for SD-VAE, please adapt for other autoencoders 
         noise = torch.randn(self.batch_size, self.latent_channel, self.latent_resolution, self.latent_resolution, device=accelerator.device)
@@ -506,11 +498,13 @@ class Trainer:
                     "guidance_cls_loss": loss_dict['guidance_cls_loss'].item()
                 })
 
-            wandb.log(
+            self.accelerator.log(
                 wandb_loss_dict,
                 step=self.step
             )
 
+        # TODO: Rewrite
+        """
         if visual:
             if not self.args.gan_alone:
                 log_dict['dmtrain_pred_real_image_decoded'] = accelerator.gather(log_dict['dmtrain_pred_real_image_decoded'])
@@ -617,6 +611,7 @@ class Trainer:
                     data_dict,
                     step=self.step
                 )
+        """
         
         self.accelerator.wait_for_everyone()
     # ------------------------------------------------------------------------------------------------------
