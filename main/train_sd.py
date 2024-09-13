@@ -524,7 +524,7 @@ class Trainer:
                 wandb_loss_dict,
                 step=self.step
             )
-            logger.info(f"loss {wandb_loss_dict['loss_dm']}")
+            logger.info(f"{wandb_loss_dict }")
         ##############################################################################
 
         # TODO: Rewrite
