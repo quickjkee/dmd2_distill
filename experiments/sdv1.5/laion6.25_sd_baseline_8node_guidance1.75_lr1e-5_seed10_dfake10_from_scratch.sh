@@ -3,9 +3,7 @@ export WANDB_ENTITY=$2
 export WANDB_PROJECT=$3
 export MASTER_IP=$4
 
-torchrun --nnodes 1 --nproc_per_node=8 --rdzv_id=2345 \
-    --rdzv_backend=c10d \
-    --rdzv_endpoint=$MASTER_IP main/train_sd.py \
+python3 -m torch.distributed.run --rdzv_endpoint=0.0.0.0:1206 --nproc_per_node=8  main/train_sd.py \
     --generator_lr 1e-5  \
     --guidance_lr 1e-5 \
     --train_iters 100000000 \

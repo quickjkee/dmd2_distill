@@ -226,13 +226,14 @@ class SDUniModel(nn.Module):
         noisy_image = noise 
         return text_embedding, pooled_text_embedding, real_train_dict, noisy_image
 
-    def forward(self, noise, text_embedding, uncond_embedding, 
-        visual=False, denoising_dict=None,
-        real_train_dict=None,
-        compute_generator_gradient=True,
-        generator_turn=False,
-        guidance_turn=False,
-        guidance_data_dict=None    
+    def forward(self,
+                noise, text_embedding, uncond_embedding,
+                visual=False, denoising_dict=None,
+                real_train_dict=None,
+                compute_generator_gradient=True,
+                generator_turn=False,
+                guidance_turn=False,
+                guidance_data_dict=None
     ):
         assert (generator_turn and not guidance_turn) or (guidance_turn and not generator_turn) 
 
