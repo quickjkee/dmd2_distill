@@ -20,5 +20,5 @@ imageio
 piq==0.7.0 
 safetensors 
 gradio 
-huggingface-hub==0.22.0 
+huggingface-hub==0.23.2
 clean-fid
