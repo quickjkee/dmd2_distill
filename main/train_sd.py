@@ -42,7 +42,7 @@ class Trainer:
         accelerator = Accelerator(
             gradient_accumulation_steps=args.gradient_accumulation_steps,
             mixed_precision="no",
-            log_with="wandb",
+            log_with="tensorboard",
             project_config=accelerator_project_config,
             kwargs_handlers=None,
             dispatch_batches=False
