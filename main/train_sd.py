@@ -1,6 +1,7 @@
 import matplotlib
 matplotlib.use('Agg')
 from main.utils import prepare_images_for_saving, draw_valued_array, draw_probability_histogram
+from main.test_folder_sd import sample
 from yt_tools.nirvana_utils import copy_snapshot_to_out, copy_out_to_snapshot, copy_logs_to_logs_path
 from main.sd_image_dataset import SDImageDatasetLMDB
 from transformers import CLIPTokenizer, AutoTokenizer
@@ -540,123 +541,37 @@ class Trainer:
             logger.info(f"{wandb_loss_dict }")
         ##############################################################################
 
-        # TODO: Rewrite
-        # Eval
+        # Eval and log
         ##############################################################################
-        """
-        if visual:
-            if not self.args.gan_alone:
-                log_dict['dmtrain_pred_real_image_decoded'] = accelerator.gather(log_dict['dmtrain_pred_real_image_decoded'])
-                log_dict['dmtrain_pred_fake_image_decoded'] = accelerator.gather(log_dict['dmtrain_pred_fake_image_decoded'])
-        
-            log_dict['generated_image'] = accelerator.gather(log_dict['generated_image'])
+        if self.step % args.checkpointing_steps == 0:
+            sampled_data = sample(accelerator=accelerator,
+                                  current_model=self.model.feedforward_model,
+                                  vae=self.model.vae,
+                                  text_encoder=self.model.text_encoder,
+                                  dataloader=self.eval_dataloader,
+                                  args=args)
+            self.model.feedforward_model.train()
 
-            if self.denoising:
-                log_dict["original_clean_image"] = accelerator.gather(log_dict["original_clean_image"])
-                log_dict['denoising_timestep'] = accelerator.gather(log_dict['denoising_timestep'])
+            if accelerator.is_main_process:
+                visualize_images = sampled_data['all_images'][:args.test_visual_batch_size]
+                _, W, H, C = visualize_images.shape
+                visualize_captions = [caption.encode('utf-8') for caption in sampled_data['all_captions']][:args.test_visual_batch_size]
 
-            # if self.cls_on_clean_image:
-            #     log_dict['real_image'] = accelerator.gather(real_train_dict['images'])
+                for tracker in accelerator.trackers:
+                    if tracker.name == "tensorboard":
+                        for j in range(len(visualize_images)):
+                            images = visualize_images[j].reshape(1, W, H, C)
+                            validation_prompt = visualize_captions[j]
+                            tracker.writer.add_images(validation_prompt, images, self.step, dataformats="NHWC")
+                    else:
+                        logger.warn(f"image logging not implemented for {tracker.name}")
 
-        if accelerator.is_main_process and visual:
-            with torch.no_grad():
-                if not self.args.gan_alone:
-                    (
-                        dmtrain_pred_real_image, dmtrain_pred_fake_image, 
-                        dmtrain_gradient_norm
-                    ) = (
-                        log_dict['dmtrain_pred_real_image_decoded'], log_dict['dmtrain_pred_fake_image_decoded'], 
-                        log_dict['dmtrain_gradient_norm']
-                    )
+            if accelerator.is_main_process:
+                copy_logs_to_logs_path(self.log_path)
 
-                    dmtrain_pred_real_image_grid = prepare_images_for_saving(dmtrain_pred_real_image, resolution=self.resolution, grid_size=self.grid_size)
-                    dmtrain_pred_fake_image_grid = prepare_images_for_saving(dmtrain_pred_fake_image, resolution=self.resolution, grid_size=self.grid_size)
-
-                    difference_scale_grid = draw_valued_array(
-                        (dmtrain_pred_real_image - dmtrain_pred_fake_image).abs().mean(dim=[1, 2, 3]).cpu().numpy(), 
-                        output_dir=self.wandb_folder, grid_size=self.grid_size
-                    )
-
-                    difference = (dmtrain_pred_real_image - dmtrain_pred_fake_image)
-                    difference = (difference - difference.min()) / (difference.max() - difference.min())
-                    difference = (difference - 0.5)/0.5
-                    difference = prepare_images_for_saving(difference, resolution=self.resolution, grid_size=self.grid_size)
-
-                    data_dict = {
-                        "dmtrain_pred_real_image": wandb.Image(dmtrain_pred_real_image_grid),
-                        "dmtrain_pred_fake_image": wandb.Image(dmtrain_pred_fake_image_grid),
-                        "loss_dm": loss_dict['loss_dm'].item(),
-                        "dmtrain_gradient_norm": dmtrain_gradient_norm,
-                        "difference": wandb.Image(difference),
-                        "difference_norm_grid": wandb.Image(difference_scale_grid),
-                    }
-                else:
-                    data_dict = {} 
-
-                generated_image = log_dict['generated_image']
-                generated_image_grid = prepare_images_for_saving(generated_image, resolution=self.resolution, grid_size=self.grid_size)
-
-                generated_image_mean = generated_image.mean()
-                generated_image_std = generated_image.std()
-
-                data_dict.update({
-                    "generated_image": wandb.Image(generated_image_grid),
-                    "loss_fake_mean": loss_dict['loss_fake_mean'].item(),
-                    "generator_grad_norm": generator_grad_norm.item(),
-                    "guidance_grad_norm": guidance_grad_norm.item(),
-                })
-
-                if self.denoising:
-                    origianl_clean_image = log_dict["original_clean_image"]
-                    origianl_clean_image_grid = prepare_images_for_saving(origianl_clean_image, resolution=self.resolution, grid_size=self.grid_size)
-
-                    denoising_timestep = log_dict["denoising_timestep"]
-                    denoising_timestep_grid = draw_valued_array(denoising_timestep.cpu().numpy(), output_dir=self.wandb_folder, grid_size=self.grid_size)
-
-                    data_dict.update(
-                        {
-                            "original_clean_image": wandb.Image(origianl_clean_image_grid),
-                            "original_image_mean": original_image_mean.item(),
-                            "original_image_std": original_image_std.item(),
-                            "denoising_timestep": wandb.Image(denoising_timestep_grid)
-                        }
-                    )
-
-                if self.cls_on_clean_image:
-                    data_dict['guidance_cls_loss'] = loss_dict['guidance_cls_loss'].item()
-
-                    if self.gen_cls_loss:
-                        data_dict['gen_cls_loss'] = loss_dict['gen_cls_loss'].item()
-
-                    pred_realism_on_fake = log_dict["pred_realism_on_fake"]
-                    pred_realism_on_real = log_dict["pred_realism_on_real"]
-
-                    hist_pred_realism_on_fake = draw_probability_histogram(pred_realism_on_fake.cpu().numpy())
-                    hist_pred_realism_on_real = draw_probability_histogram(pred_realism_on_real.cpu().numpy())
-
-                    # real_image = log_dict['real_image']
-                    # real_image_grid = prepare_images_for_saving(real_image, resolution=self.resolution, grid_size=self.grid_size)
-
-                    data_dict.update(
-                        {
-                            "hist_pred_realism_on_fake": wandb.Image(hist_pred_realism_on_fake),
-                            "hist_pred_realism_on_real": wandb.Image(hist_pred_realism_on_real),
-                            # "real_image": wandb.Image(real_image_grid)
-                        }
-                    )
-
-
-                wandb.log(
-                    data_dict,
-                    step=self.step
-                )
-        """
-        
         self.accelerator.wait_for_everyone()
-
-        if accelerator.is_main_process:
-            copy_logs_to_logs_path(self.log_path)
         ##############################################################################
+
     # ------------------------------------------------------------------------------------------------------
 
     # ------------------------------------------------------------------------------------------------------
@@ -686,6 +601,7 @@ def parse_args():
     parser.add_argument("--output_path", type=str, default="/mnt/localssd/test_stable_diffusion_coco")
     parser.add_argument("--log_path", type=str, default="log_stable_diffusion_coco")
     parser.add_argument("--train_iters", type=int, default=1000000)
+    parser.add_argument("--checkpointing_steps", type=int, default=100)
     parser.add_argument("--log_iters", type=int, default=100)
     parser.add_argument("--batch_size", type=int, default=1)
     parser.add_argument("--seed", type=int, default=0)
@@ -718,6 +634,8 @@ def parse_args():
     parser.add_argument("--num_workers", type=int, default=12)
     parser.add_argument("--latent_channel", type=int, default=4)
     parser.add_argument("--max_checkpoint", type=int, default=150)
+    parser.add_argument("--total_eval_samples", type=int, default=100)
+    parser.add_argument("--test_visual_batch_size", type=int, default=20)
     parser.add_argument("--dfake_gen_update_ratio", type=int, default=1)
     parser.add_argument("--generator_lr", type=float)
     parser.add_argument("--guidance_lr", type=float)
@@ -730,6 +648,7 @@ def parse_args():
     parser.add_argument("--generator_ckpt_path", type=str)
     parser.add_argument("--conditioning_timestep", type=int, default=999)
     parser.add_argument("--tiny_vae", action="store_true")
+    parser.add_argument("--sd_teacher", action="store_true")
     parser.add_argument("--gradient_checkpointing", action="store_true", help="apply gradient checkpointing for dfake and generator. this might be a better option than FSDP")
     parser.add_argument("--dm_loss_weight", type=float, default=1.0)
 

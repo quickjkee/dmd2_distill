@@ -64,7 +64,7 @@ def get_x0_from_noise(sample, model_output, timestep):
     return pred_original_sample
 
 @torch.no_grad()
-def sample(accelerator, current_model, vae, text_encoder, dataloader, args, model_index, teacher_pipeline=None):
+def sample(accelerator, current_model, vae, text_encoder, dataloader, args, teacher_pipeline=None):
     current_model.eval()
     all_images = [] 
     all_captions = [] 
@@ -100,9 +100,8 @@ def sample(accelerator, current_model, vae, text_encoder, dataloader, args, mode
                 noise, timesteps.long() * (args.num_train_timesteps-1), batch_text_caption_embedding
             ).sample 
 
-            if args.pred_eps:
-                eval_images = get_x0_from_noise(
-                    noise, eval_images, timesteps
+            eval_images = get_x0_from_noise(
+                noise, eval_images, timesteps
                 )
 
             # decode the latents and cast to uint8 RGB
@@ -128,35 +127,6 @@ def sample(accelerator, current_model, vae, text_encoder, dataloader, args, mode
     all_captions = [caption for sublist in all_captions for caption in sublist]
     data_dict = {"all_images": all_images, "all_captions": all_captions}
 
-    if accelerator.is_main_process:        
-        visualize_images = all_images[:args.test_visual_batch_size]
-        visualize_captions = [caption.encode('utf-8') for caption in all_captions][:args.test_visual_batch_size]
-
-        for start in range(0, len(visualize_images), args.per_image_object):
-            end = min(start + args.per_image_object, len(visualize_images))
-            if start >= end: 
-                continue 
-            
-            eval_images_grid = create_image_grid(args, visualize_images[start:end], 
-            visualize_captions[start:end] if accelerator.num_processes == 1 else None) # caption is only correct for single gpu
-            wandb.log(
-                {f"generated_image_grid_{start:04d}_{end:04d}": wandb.Image(eval_images_grid)},
-                step=model_index
-            )
-        print("save images")
-
-        image_brightness = (all_images[:5000] / 255.0).mean()
-        image_std = (all_images[:5000] / 255.0).std()
-
-        wandb.log(
-            {
-                "image_brightness": image_brightness,
-                "image_std": image_std
-            },
-            step=model_index
-        )
-
-    accelerator.wait_for_everyone()
     return data_dict 
 
 @torch.no_grad()
