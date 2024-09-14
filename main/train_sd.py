@@ -233,7 +233,6 @@ class Trainer:
             weight_decay=0.01  # pytorch's default 
         )
 
-        # actually this scheduler is not very useful (it warms up from 0 to max_lr in 500 / num_gpu steps), but we keep it here for consistency
         self.scheduler_generator = get_scheduler(
             "constant_with_warmup",
             optimizer=self.optimizer_generator,
@@ -635,6 +634,7 @@ def parse_args():
     parser.add_argument("--latent_channel", type=int, default=4)
     parser.add_argument("--max_checkpoint", type=int, default=150)
     parser.add_argument("--total_eval_samples", type=int, default=100)
+    parser.add_argument("--eval_batch_size", type=int, default=16)
     parser.add_argument("--test_visual_batch_size", type=int, default=20)
     parser.add_argument("--dfake_gen_update_ratio", type=int, default=1)
     parser.add_argument("--generator_lr", type=float)
