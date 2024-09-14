@@ -368,11 +368,7 @@ class Trainer:
     # ------------------------------------------------------------------------------------------------------
     def train_one_step(self):
         self.model.train()
-
         accelerator = self.accelerator
-        if accelerator.is_main_process:
-            tracker_config = dict(vars(self.args))
-            accelerator.init_trackers('dmd2', config=tracker_config)
 
         # Data sampling
         ##############################################################################
@@ -596,6 +592,10 @@ class Trainer:
 
     # ------------------------------------------------------------------------------------------------------
     def train(self):
+        if self.accelerator.is_main_process:
+            tracker_config = dict(vars(self.args))
+            self.accelerator.init_trackers('dmd2', config=tracker_config)
+
         for index in range(self.step, self.train_iters):                
             self.train_one_step()
             if (not self.no_save)  and self.step % self.log_iters == 0:
