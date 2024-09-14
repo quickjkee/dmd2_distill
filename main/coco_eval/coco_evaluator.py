@@ -7,6 +7,7 @@ from torch.utils.data import Dataset
 from PIL import Image
 import numpy as np 
 import shutil
+from transformers import AutoProcessor, AutoModel
 import torch 
 import time 
 import os 
@@ -82,7 +83,7 @@ def evaluate_model(args, device, all_images, patch_fid=False):
         fake_arr=all_images,
         gt_dir=args.ref_dir,
         device=device,
-        resize_size=args.eval_res,
+        resize_size=256,
         feature_extractor="inception",
         patch_fid=patch_fid
     )
@@ -117,87 +118,52 @@ class CLIPScoreDataset(Dataset):
         image_pil = self.transform(image)
         image_pil = self.preprocessor(image_pil)
         caption = self.captions[index]
-        return image_pil, caption 
+        return image_pil, caption
+
+
+@torch.no_grad()
+def calc_pick_and_clip_scores(model, image_inputs, text_inputs, batch_size=50):
+    assert len(image_inputs) == len(text_inputs)
+
+    scores = torch.zeros(len(text_inputs))
+    for i in range(0, len(text_inputs), batch_size):
+        image_batch = image_inputs[i:i + batch_size]
+        text_batch = text_inputs[i:i + batch_size]
+        # embed
+        with torch.cuda.amp.autocast():
+            image_embs = model.get_image_features(image_batch)
+        image_embs = image_embs / torch.norm(image_embs, dim=-1, keepdim=True)
+
+        with torch.cuda.amp.autocast():
+            text_embs = model.get_text_features(text_batch)
+        text_embs = text_embs / torch.norm(text_embs, dim=-1, keepdim=True)
+        # score
+        scores[i:i + batch_size] = (text_embs * image_embs).sum(-1)  # model.logit_scale.exp() *
+    return scores.cpu()
 
 
 @torch.no_grad()
 def compute_clip_score(
-    images, captions, clip_model="ViT-B/32", device="cuda", how_many=30000):
+    images, prompts, args, device="cuda", how_many=30000):
     print("Computing CLIP score")
-    import clip as openai_clip 
-    if clip_model == "ViT-B/32":
-        clip, clip_preprocessor = openai_clip.load("ViT-B/32", device=device)
-        clip = clip.eval()
-    elif clip_model == "ViT-G/14":
-        import open_clip
-        clip, _, clip_preprocessor = open_clip.create_model_and_transforms("ViT-g-14", pretrained="laion2b_s12b_b42k")
-        clip = clip.to(device)
-        clip = clip.eval()
-        clip = clip.float()
-    else:
-        raise NotImplementedError
+    clip_preprocessor = AutoProcessor.from_pretrained(args.clip_model_name_or_path)
+    clip_model = AutoModel.from_pretrained(args.clip_model_name_or_path).eval().to(device)
 
-    def resize_and_center_crop(image_np, resize_size=256):
-        image_pil = Image.fromarray(image_np) 
-        image_pil = CenterCropLongEdge()(image_pil)
+    image_inputs = clip_preprocessor(
+        images=images,
+        return_tensors="pt",
+    )['pixel_values'].to(device)
 
-        if resize_size is not None:
-            image_pil = image_pil.resize((resize_size, resize_size),
-                                         Image.LANCZOS)
-        return image_pil
+    text_inputs = clip_preprocessor(
+        text=prompts,
+        padding=True,
+        truncation=True,
+        max_length=77,
+        return_tensors="pt",
+    )['input_ids'].to(device)
 
-    def simple_collate(batch):
-        images, captions = [], []
-        for img, cap in batch:
-            images.append(img)
-            captions.append(cap)
-        return images, captions
+    clip_score = calc_pick_and_clip_scores(clip_model, image_inputs, text_inputs).mean()
 
-
-    dataset = CLIPScoreDataset(
-        images, captions, transform=resize_and_center_crop, 
-        preprocessor=clip_preprocessor
-    )
-    dataloader = DataLoader(
-        dataset, batch_size=64, 
-        shuffle=False, num_workers=8,
-        collate_fn=simple_collate
-        
-    )
-
-    cos_sims = []
-    count = 0
-    # for imgs, txts in zip(images, captions):
-    for index, (imgs_pil, txts) in enumerate(dataloader):
-        # imgs_pil = [resize_and_center_crop(imgs)]
-        # txts = [txts]
-        # imgs_pil = [clip_preprocessor(img) for img in imgs]
-        imgs = torch.stack(imgs_pil, dim=0).to(device)
-        tokens = openai_clip.tokenize(txts, truncate=True).to(device)
-        # Prepending text prompts with "A photo depicts "
-        # https://arxiv.org/abs/2104.08718
-        prepend_text = "A photo depicts "
-        prepend_text_token = openai_clip.tokenize(prepend_text)[:, 1:4].to(device)
-        prepend_text_tokens = prepend_text_token.expand(tokens.shape[0], -1)
-        
-        start_tokens = tokens[:, :1]
-        new_text_tokens = torch.cat(
-            [start_tokens, prepend_text_tokens, tokens[:, 1:]], dim=1)[:, :77]
-        last_cols = new_text_tokens[:, 77 - 1:77]
-        last_cols[last_cols > 0] = 49407  # eot token
-        new_text_tokens = torch.cat([new_text_tokens[:, :76], last_cols], dim=1)
-        
-        img_embs = clip.encode_image(imgs)
-        text_embs = clip.encode_text(new_text_tokens)
-
-        similarities = torch.nn.functional.cosine_similarity(img_embs, text_embs, dim=1)
-        cos_sims.append(similarities)
-        count += similarities.shape[0]
-        if count >= how_many:
-            break
-    
-    clip_score = torch.cat(cos_sims, dim=0)[:how_many].mean()
-    clip_score = clip_score.detach().cpu().numpy()
     return clip_score
 
 @torch.no_grad()

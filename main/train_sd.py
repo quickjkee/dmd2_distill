@@ -1,7 +1,7 @@
 import matplotlib
 matplotlib.use('Agg')
 from main.utils import prepare_images_for_saving, draw_valued_array, draw_probability_histogram
-from main.test_folder_sd import sample
+from main.test_folder_sd import sample, log_validation
 from yt_tools.nirvana_utils import copy_snapshot_to_out, copy_out_to_snapshot, copy_logs_to_logs_path
 from main.sd_image_dataset import SDImageDatasetLMDB
 from transformers import CLIPTokenizer, AutoTokenizer
@@ -17,6 +17,7 @@ from torch.distributed.fsdp import (
     FullStateDictConfig,
     StateDictType
 )
+from main.coco_eval.coco_evaluator import evaluate_model, compute_clip_score
 from pathlib import Path
 import argparse 
 import shutil 
@@ -156,7 +157,7 @@ class Trainer:
         dataloader = accelerator.prepare(dataloader)
         self.dataloader = cycle(dataloader)
 
-        eval_dataloader = torch.utils.data.DataLoader(eval_dataset, batch_size=args.batch_size, shuffle=True, drop_last=True)
+        eval_dataloader = torch.utils.data.DataLoader(eval_dataset, batch_size=args.batch_size, shuffle=False, drop_last=True)
         eval_dataloader = accelerator.prepare(eval_dataloader)
         self.eval_dataloader = cycle(eval_dataloader)
 
@@ -553,23 +554,36 @@ class Trainer:
                                   dataloader=self.eval_dataloader,
                                   args=args)
             self.model.feedforward_model.train()
+            torch.cuda.empty_cache()
+
+            if accelerator.is_main_process:
+                log_validation(accelerator=accelerator,
+                               tokenizer=self.tokenizers[0],
+                               vae=self.model.vae,
+                               text_encoder=self.model.text_encoder,
+                               current_model=self.model.feedforward_model,
+                               step=self.step,
+                               args=args)
+
             self.model.vae = self.model.vae.to(torch.float16)
 
             if accelerator.is_main_process:
-                visualize_images = sampled_data['all_images'][:args.test_visual_batch_size]
-                _, W, H, C = visualize_images.shape
-                visualize_captions = [caption.encode('utf-8') for caption in sampled_data['all_captions']][:args.test_visual_batch_size]
-
-                for tracker in accelerator.trackers:
-                    if tracker.name == "tensorboard":
-                        for j in range(len(visualize_images)):
-                            images = visualize_images[j].reshape(1, W, H, C)
-                            validation_prompt = visualize_captions[j]
-                            tracker.writer.add_images(validation_prompt, images, self.step, dataformats="NHWC")
-                    else:
-                        logger.warn(f"image logging not implemented for {tracker.name}")
-
-            if accelerator.is_main_process:
+                fid = evaluate_model(
+                    args, accelerator.device, sampled_data['all_images']
+                )
+                clip_score = compute_clip_score(
+                        images=sampled_data['all_images'],
+                        prompts=sampled_data['all_captions'],
+                        args=args,
+                        device=accelerator.device,
+                        how_many=args.total_eval_samples
+                    )
+                logs = {'fid': fid, 'clip_score': float(clip_score)}
+                self.accelerator.log(
+                    logs,
+                    step=self.step
+                )
+                logger.info(f"{logs}")
                 copy_logs_to_logs_path(self.log_path)
 
         self.accelerator.wait_for_everyone()
@@ -612,6 +626,7 @@ def parse_args():
     parser.add_argument("--lr", type=float, default=1e-5)
     parser.add_argument("--initialie_generator", action="store_true")
     parser.add_argument("--checkpoint_path", type=str, default=None)
+    parser.add_argument("--clip_model_name_or_path", type=str, default=None)
     parser.add_argument("--local_rank", type=int, default=-1, help="For distributed training: local_rank")
     parser.add_argument("--wandb_entity", type=str)
     parser.add_argument("--wandb_project", type=str)
@@ -638,8 +653,8 @@ def parse_args():
     parser.add_argument("--latent_channel", type=int, default=4)
     parser.add_argument("--max_checkpoint", type=int, default=150)
     parser.add_argument("--total_eval_samples", type=int, default=100)
+    parser.add_argument("--ref_dir", type=str)
     parser.add_argument("--eval_batch_size", type=int, default=16)
-    parser.add_argument("--test_visual_batch_size", type=int, default=20)
     parser.add_argument("--dfake_gen_update_ratio", type=int, default=1)
     parser.add_argument("--generator_lr", type=float)
     parser.add_argument("--guidance_lr", type=float)
