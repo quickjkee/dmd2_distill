@@ -573,13 +573,14 @@ class Trainer:
                 fid = evaluate_model(
                     args, accelerator.device, sampled_data['all_images']
                 )
-                clip_score = compute_clip_score(
-                        images=[im.fromarray(i) for i in sampled_data['all_images']],
-                        prompts=sampled_data['all_captions'],
-                        args=args,
-                        device=accelerator.device,
-                        how_many=args.total_eval_samples
-                    )
+                clip_score = 0.0
+                    #compute_clip_score(
+                    #    images=[im.fromarray(i) for i in sampled_data['all_images']],
+                    #    prompts=sampled_data['all_captions'],
+                    #    args=args,
+                    #    device=accelerator.device,
+                    #    how_many=args.total_eval_samples
+                    #)
                 logs = {'fid': fid, 'clip_score': float(clip_score)}
                 self.accelerator.log(
                     logs,
