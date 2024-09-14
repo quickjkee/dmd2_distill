@@ -185,10 +185,10 @@ def sample(accelerator, current_model, vae, text_encoder, dataloader, args, teac
             eval_images = eval_images.contiguous() 
 
         gathered_images = accelerator.gather(eval_images)
-
         all_images.append(gathered_images.cpu().numpy())
 
-        all_captions.append(batch_prompts['key'])
+        gathered_captions = accelerator.gather(batch_prompts['key'])
+        all_captions.append(gathered_captions)
 
         counter += len(gathered_images)
 
