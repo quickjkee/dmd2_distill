@@ -12,6 +12,7 @@ from main.sd_unified_model import SDUniModel
 from accelerate.utils import set_seed
 from accelerate.logging import get_logger
 from accelerate import Accelerator
+from PIL import Image as im
 from torch.distributed.fsdp import (
     FullyShardedDataParallel as FSDP,
     FullStateDictConfig,
@@ -573,7 +574,7 @@ class Trainer:
                     args, accelerator.device, sampled_data['all_images']
                 )
                 clip_score = compute_clip_score(
-                        images=sampled_data['all_images'],
+                        images=[im.fromarray(i) for i in sampled_data['all_images']],
                         prompts=sampled_data['all_captions'],
                         args=args,
                         device=accelerator.device,

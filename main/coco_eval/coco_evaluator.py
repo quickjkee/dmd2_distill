@@ -162,6 +162,8 @@ def compute_clip_score(
         return_tensors="pt",
     )['input_ids'].to(device)
 
+    print(len(image_inputs), len(text_inputs))
+
     clip_score = calc_pick_and_clip_scores(clip_model, image_inputs, text_inputs).mean()
 
     return clip_score
