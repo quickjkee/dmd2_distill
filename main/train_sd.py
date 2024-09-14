@@ -553,7 +553,7 @@ class Trainer:
                                   dataloader=self.eval_dataloader,
                                   args=args)
             self.model.feedforward_model.train()
-            self.model.vae = self.model.vae.to(self.model.feedforward_model.dtype)
+            self.model.vae = self.model.vae.to(torch.float16)
 
             if accelerator.is_main_process:
                 visualize_images = sampled_data['all_images'][:args.test_visual_batch_size]
