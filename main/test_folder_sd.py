@@ -118,7 +118,7 @@ def log_validation(accelerator, tokenizer, vae, text_encoder, current_model, ste
             eval_images = vae.decode(eval_images * 1 / 0.18215).sample.float()
             eval_images = ((eval_images + 1.0) * 127.5).clamp(0, 255).to(torch.uint8).permute(0, 2, 3, 1)
             eval_images = eval_images.contiguous()
-            images.append(eval_images)
+            images.append(eval_images.cpu().numpy())
 
         images = np.stack(images)
         image_logs.append({"validation_prompt": prompt, "images": images})

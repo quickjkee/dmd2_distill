@@ -554,6 +554,7 @@ class Trainer:
                                   dataloader=self.eval_dataloader,
                                   args=args)
             self.model.feedforward_model.train()
+            self.accelerator.wait_for_everyone()
             torch.cuda.empty_cache()
 
             if accelerator.is_main_process:
