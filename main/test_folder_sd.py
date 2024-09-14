@@ -120,7 +120,7 @@ def log_validation(accelerator, tokenizer, vae, text_encoder, current_model, ste
             eval_images = eval_images.contiguous()
             images.append(eval_images.cpu().numpy())
 
-        images = np.stack(images)
+        images = np.concatenate(images, axis=0)
         image_logs.append({"validation_prompt": prompt, "images": images})
 
     for tracker in accelerator.trackers:
