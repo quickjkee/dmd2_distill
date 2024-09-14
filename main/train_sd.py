@@ -1,6 +1,7 @@
 import matplotlib
 matplotlib.use('Agg')
 from main.utils import prepare_images_for_saving, draw_valued_array, draw_probability_histogram
+from yt_tools.nirvana_utils import copy_snapshot_to_out, copy_out_to_snapshot, copy_logs_to_logs_path
 from main.sd_image_dataset import SDImageDatasetLMDB
 from transformers import CLIPTokenizer, AutoTokenizer
 from accelerate.utils import ProjectConfiguration
@@ -254,6 +255,7 @@ class Trainer:
         ########################################################
 
         self.accelerator = accelerator
+        self.log_path = log_path
         self.train_iters = args.train_iters
         self.batch_size = args.batch_size
         self.resolution = args.resolution 
@@ -640,6 +642,7 @@ class Trainer:
         """
         
         self.accelerator.wait_for_everyone()
+        copy_logs_to_logs_path(self.log_path)
         ##############################################################################
     # ------------------------------------------------------------------------------------------------------
 
