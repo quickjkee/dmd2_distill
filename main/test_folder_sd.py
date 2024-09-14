@@ -63,6 +63,11 @@ def get_x0_from_noise(sample, model_output, timestep):
     pred_original_sample = (sample - beta_prod_t ** (0.5) * model_output) / alpha_prod_t ** (0.5)
     return pred_original_sample
 
+
+@torch.no_grad()
+def log_validation(tokenizer, vae, text_encoder, current_model):
+    pass
+
 @torch.no_grad()
 def sample(accelerator, current_model, vae, text_encoder, dataloader, args, teacher_pipeline=None):
     current_model.eval()
@@ -105,6 +110,7 @@ def sample(accelerator, current_model, vae, text_encoder, dataloader, args, teac
                 )
 
             # decode the latents and cast to uint8 RGB
+            vae = vae.to(eval_images.dtype)
             eval_images = vae.decode(eval_images * 1 / 0.18215).sample.float()
             eval_images = ((eval_images + 1.0) * 127.5).clamp(0, 255).to(torch.uint8).permute(0, 2, 3, 1)
             eval_images = eval_images.contiguous() 

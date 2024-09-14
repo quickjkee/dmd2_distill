@@ -103,6 +103,7 @@ class Trainer:
             tokenizer_two = AutoTokenizer.from_pretrained(
                 args.model_id, subfolder="tokenizer_2", revision=args.revision, use_fast=False
             )
+            self.tokenizers = [tokenizer_one, tokenizer_two]
 
             dataset = SDTextDataset(
                 args.train_prompt_path, 
@@ -128,6 +129,8 @@ class Trainer:
             tokenizer = CLIPTokenizer.from_pretrained(
                 args.model_id, subfolder="tokenizer"
             )
+            self.tokenizers = [tokenizer]
+
             uncond_input_ids = tokenizer(
                 [""], max_length=tokenizer.model_max_length, 
                 return_tensors="pt", padding="max_length", truncation=True
