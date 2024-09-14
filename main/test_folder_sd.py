@@ -66,7 +66,34 @@ def get_x0_from_noise(sample, model_output, timestep):
 
 @torch.no_grad()
 def log_validation(tokenizer, vae, text_encoder, current_model):
-    pass
+    validation_prompts = [
+        "portrait photo of a girl, photograph, highly detailed face, depth of field, moody light, golden hour, style by Dan Winters, Russell James, Steve McCurry, centered, extremely detailed, Nikon D850, award winning photography",
+        "Self-portrait oil painting, a beautiful cyborg with golden hair, 8k",
+        "Astronaut in a jungle, cold color palette, muted colors, detailed, 8k",
+        "A photo of beautiful mountain with realistic sunset and blue lake, highly detailed, masterpiece",
+        'A sad puppy with large eyes',
+        'A girl with pale blue hair and a cami tank top',
+        'cute girl, Kyoto animation, 4k, high resolution',
+        "A person laying on a surfboard holding his dog",
+        "Green commercial building with refrigerator and refrigeration units outside",
+        "An airplane with two propellor engines flying in the sky",
+        "Four cows in a pen on a sunny day",
+        "Three dogs sleeping together on an unmade bed",
+        "a deer with bird feathers, highly detailed, full body"
+    ]
+
+    image_logs = []
+
+    for _, prompt in enumerate(validation_prompts):
+        text_input_ids_one = tokenizer(
+            [prompt],
+            padding="max_length",
+            max_length=tokenizer.model_max_length,
+            truncation=True,
+            return_tensors="pt",
+        ).input_ids
+        text_embedding = text_encoder(text_input_ids_one)
+
 
 @torch.no_grad()
 def sample(accelerator, current_model, vae, text_encoder, dataloader, args, teacher_pipeline=None):
