@@ -19,6 +19,7 @@ python3 -m torch.distributed.run --rdzv_endpoint=0.0.0.0:1206 --nproc_per_node=8
     --max_grad_norm 10.0 \
     --model_id "sd-v1-5" \
     --train_prompt_path prompts/captions_laion_score6.25.pkl \
+    --eval_prompt_path prompts/captions_coco14_test.pkl \
     --wandb_iters 100000 \
     --wandb_entity $WANDB_ENTITY \
     --wandb_name "laion6.25_sd_baseline_8node_guidance1.75_lr1e-5_seed10_dfake10_from_scratch"  \

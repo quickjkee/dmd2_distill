@@ -108,7 +108,13 @@ class Trainer:
                 is_sdxl=True,
                 tokenizer_one=tokenizer_one,
                 tokenizer_two=tokenizer_two
-            )  
+            )
+            eval_dataset = SDTextDataset(
+                args.eval_prompt_path,
+                is_sdxl=True,
+                tokenizer_one=tokenizer_one,
+                tokenizer_two=tokenizer_two
+            )
 
             # also load the training dataset images, this will be useful for GAN loss 
             real_dataset = SDImageDatasetLMDB(
@@ -127,6 +133,7 @@ class Trainer:
             ).input_ids.to(accelerator.device)
 
             dataset = SDTextDataset(args.train_prompt_path, tokenizer, is_sdxl=False)
+            eval_dataset = SDTextDataset(args.eval_prompt_path, tokenizer, is_sdxl=False)
             self.uncond_embedding = self.model.text_encoder(uncond_input_ids)[0]
 
             # also load the training dataset images, this will be useful for GAN loss 
@@ -144,6 +151,10 @@ class Trainer:
         dataloader = torch.utils.data.DataLoader(dataset, batch_size=args.batch_size, shuffle=True, drop_last=True)
         dataloader = accelerator.prepare(dataloader)
         self.dataloader = cycle(dataloader)
+
+        eval_dataloader = torch.utils.data.DataLoader(eval_dataset, batch_size=args.batch_size, shuffle=True, drop_last=True)
+        eval_dataloader = accelerator.prepare(eval_dataloader)
+        self.eval_dataloader = cycle(eval_dataloader)
 
         real_dataloader = torch.utils.data.DataLoader(
             real_dataset, num_workers=args.num_workers, 
@@ -642,7 +653,9 @@ class Trainer:
         """
         
         self.accelerator.wait_for_everyone()
-        copy_logs_to_logs_path(self.log_path)
+
+        if accelerator.is_main_process:
+            copy_logs_to_logs_path(self.log_path)
         ##############################################################################
     # ------------------------------------------------------------------------------------------------------
 
@@ -694,6 +707,7 @@ def parse_args():
     parser.add_argument("--num_train_timesteps", type=int, default=1000)
     parser.add_argument("--ckpt_only_path", type=str, default=None, help="checkpoint (no optimizer state) only path")
     parser.add_argument("--train_prompt_path", type=str)
+    parser.add_argument("--eval_prompt_path", type=str)
     parser.add_argument("--latent_resolution", type=int, default=64)
     parser.add_argument("--real_guidance_scale", type=float, default=6.0)
     parser.add_argument("--fake_guidance_scale", type=float, default=1.0)
