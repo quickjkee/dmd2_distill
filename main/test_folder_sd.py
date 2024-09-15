@@ -220,7 +220,7 @@ def sample(accelerator, current_model, vae, tokenizer, text_encoder, prompts_pat
             vae = vae.to(eval_images.dtype)
             eval_images = vae.decode(eval_images * 1 / 0.18215).sample.float()
             eval_images = ((eval_images + 1.0) * 127.5).clamp(0, 255).to(torch.uint8).permute(0, 2, 3, 1)
-            eval_images = eval_images.contiguous()
+            eval_images = eval_images.contiguous().cpu()
         ##########################################
 
         for text_idx, global_idx in enumerate(rank_batches_index[cnt]):
