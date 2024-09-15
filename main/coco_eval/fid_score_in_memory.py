@@ -48,7 +48,7 @@ except ImportError:
     def tqdm(x):
         return x
 
-from src.inception import InceptionV3
+from main.coco_eval.inception import InceptionV3
 
 
 IMAGE_EXTENSIONS = {'bmp', 'jpg', 'jpeg', 'pgm', 'png', 'ppm',

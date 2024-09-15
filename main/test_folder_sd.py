@@ -252,6 +252,6 @@ def sample(accelerator, current_model, vae, tokenizer, text_encoder, prompts_pat
             prompts.append(all_prompts[global_idx])
     ##########################################
 
-        # Done.
+    # Done.
     dist.barrier()
     return images, prompts
