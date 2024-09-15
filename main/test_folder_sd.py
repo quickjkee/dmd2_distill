@@ -177,7 +177,7 @@ def sample(accelerator, current_model, vae, tokenizer, text_encoder, prompts_pat
         # Inputs
         ##########################################
         text_input_ids_one = tokenizer(
-            mini_batch,
+            list(mini_batch),
             padding="max_length",
             max_length=tokenizer.model_max_length,
             truncation=True,
