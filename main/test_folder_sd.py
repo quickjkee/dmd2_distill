@@ -164,7 +164,7 @@ def sample(accelerator, current_model, vae, tokenizer, text_encoder, prompts_pat
     ##########################################
     current_model.eval()
     set_seed(args.seed + accelerator.process_index)
-    generator = torch.Generator().manual_seed(args.seed)
+    generator = torch.Generator().manual_seed(args.seed + accelerator.process_index)
     rank_batches, rank_batches_index, all_prompts = prepare_val_prompts(
         prompts_path, bs=args.batch_size, max_cnt=args.total_eval_samples
     )
