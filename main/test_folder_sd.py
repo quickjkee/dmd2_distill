@@ -223,35 +223,35 @@ def sample(accelerator, current_model, vae, tokenizer, text_encoder, prompts_pat
             eval_images = eval_images.contiguous()
         ##########################################
 
-        # Aggregation
-        ##########################################
         for text_idx, global_idx in enumerate(rank_batches_index[cnt]):
             img_tensor = torch.tensor(np.array(eval_images[text_idx]))
             local_images.append(img_tensor)
             local_text_idxs.append(global_idx)
 
-        local_images = torch.stack(local_images).cuda()
-        local_text_idxs = torch.tensor(local_text_idxs).cuda()
+    # Aggregation
+    ##########################################
+    local_images = torch.stack(local_images).cuda()
+    local_text_idxs = torch.tensor(local_text_idxs).cuda()
 
-        gathered_images = [torch.zeros_like(local_images) for _ in range(dist.get_world_size())]
-        gathered_text_idxs = [torch.zeros_like(local_text_idxs) for _ in range(dist.get_world_size())]
+    gathered_images = [torch.zeros_like(local_images) for _ in range(dist.get_world_size())]
+    gathered_text_idxs = [torch.zeros_like(local_text_idxs) for _ in range(dist.get_world_size())]
 
-        dist.all_gather(gathered_images, local_images)  # gather not supported with NCCL
-        dist.all_gather(gathered_text_idxs, local_text_idxs)
+    dist.all_gather(gathered_images, local_images)  # gather not supported with NCCL
+    dist.all_gather(gathered_text_idxs, local_text_idxs)
 
-        images, prompts = [], []
-        if dist.get_rank() == 0:
-            gathered_images = np.concatenate(
-                [images.cpu().numpy() for images in gathered_images], axis=0
-            )
-            gathered_text_idxs = np.concatenate(
-                [text_idxs.cpu().numpy() for text_idxs in gathered_text_idxs], axis=0
-            )
-            for image, global_idx in zip(gathered_images, gathered_text_idxs):
-                images.append(ToPILImage()(image))
-                prompts.append(all_prompts[global_idx])
-        ##########################################
+    images, prompts = [], []
+    if dist.get_rank() == 0:
+        gathered_images = np.concatenate(
+            [images.cpu().numpy() for images in gathered_images], axis=0
+        )
+        gathered_text_idxs = np.concatenate(
+            [text_idxs.cpu().numpy() for text_idxs in gathered_text_idxs], axis=0
+        )
+        for image, global_idx in zip(gathered_images, gathered_text_idxs):
+            images.append(ToPILImage()(image))
+            prompts.append(all_prompts[global_idx])
+    ##########################################
 
         # Done.
-        dist.barrier()
-        return images, prompts
+    dist.barrier()
+    return images, prompts
