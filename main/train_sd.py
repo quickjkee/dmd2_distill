@@ -536,6 +536,7 @@ class Trainer:
             sampled_data = sample(accelerator=accelerator,
                                   current_model=self.model.feedforward_model,
                                   vae=self.model.vae,
+                                  tokenizer=self.tokenizers[0],
                                   text_encoder=self.model.text_encoder,
                                   prompts_path=args.eval_prompt_path,
                                   args=args)
