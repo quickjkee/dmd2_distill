@@ -1,5 +1,5 @@
 from diffusers import UNet2DConditionModel, AutoencoderKL, StableDiffusionPipeline, DDPMScheduler
-from main.coco_eval.coco_evaluator import evaluate_model, compute_clip_score
+from main.coco_eval.coco_evaluator import evaluate_model
 from transformers import CLIPTokenizer, CLIPTextModel
 from accelerate.utils import ProjectConfiguration
 from main.utils import create_image_grid
