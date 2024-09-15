@@ -19,7 +19,9 @@ python3 -m torch.distributed.run --rdzv_endpoint=0.0.0.0:1206 --nproc_per_node=8
     --max_grad_norm 10.0 \
     --model_id "sd-v1-5" \
     --train_prompt_path prompts/captions_laion_score6.25.pkl \
-    --eval_prompt_path prompts/captions_coco14_test.pkl \
+    --coco_ref_stats_path prompts/captions_laion_score6.25.pkl \
+    --inception_path prompts/captions_laion_score6.25.pkl \
+    --eval_prompt_path prompts_raw/coco.csv \
     --total_eval_samples 100 \
     --test_visual_batch_size 20 \
     --checkpointing_steps 100 \

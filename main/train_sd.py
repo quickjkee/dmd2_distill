@@ -18,7 +18,7 @@ from torch.distributed.fsdp import (
     FullStateDictConfig,
     StateDictType
 )
-from main.coco_eval.coco_evaluator import evaluate_model, compute_clip_score
+from main.coco_eval.coco_evaluator import evaluate_model, compute_scores
 from pathlib import Path
 import argparse 
 import shutil 
@@ -113,12 +113,6 @@ class Trainer:
                 tokenizer_one=tokenizer_one,
                 tokenizer_two=tokenizer_two
             )
-            eval_dataset = SDTextDataset(
-                args.eval_prompt_path,
-                is_sdxl=True,
-                tokenizer_one=tokenizer_one,
-                tokenizer_two=tokenizer_two
-            )
 
             # also load the training dataset images, this will be useful for GAN loss 
             real_dataset = SDImageDatasetLMDB(
@@ -139,7 +133,6 @@ class Trainer:
             ).input_ids.to(accelerator.device)
 
             dataset = SDTextDataset(args.train_prompt_path, tokenizer, is_sdxl=False)
-            eval_dataset = SDTextDataset(args.eval_prompt_path, tokenizer, is_sdxl=False)
             self.uncond_embedding = self.model.text_encoder(uncond_input_ids)[0]
 
             # also load the training dataset images, this will be useful for GAN loss 
@@ -157,10 +150,6 @@ class Trainer:
         dataloader = torch.utils.data.DataLoader(dataset, batch_size=args.batch_size, shuffle=True, drop_last=True)
         dataloader = accelerator.prepare(dataloader)
         self.dataloader = cycle(dataloader)
-
-        eval_dataloader = torch.utils.data.DataLoader(eval_dataset, batch_size=args.batch_size, shuffle=False, drop_last=True)
-        eval_dataloader = accelerator.prepare(eval_dataloader)
-        self.eval_dataloader = cycle(eval_dataloader)
 
         real_dataloader = torch.utils.data.DataLoader(
             real_dataset, num_workers=args.num_workers, 
@@ -548,7 +537,7 @@ class Trainer:
                                   current_model=self.model.feedforward_model,
                                   vae=self.model.vae,
                                   text_encoder=self.model.text_encoder,
-                                  dataloader=self.eval_dataloader,
+                                  prompts_path=args.eval_prompt_path,
                                   args=args)
             self.model.feedforward_model.train()
             self.accelerator.wait_for_everyone()
@@ -566,17 +555,13 @@ class Trainer:
             self.model.vae = self.model.vae.to(torch.float16)
 
             if accelerator.is_main_process:
-                fid = evaluate_model(
-                    args, accelerator.device, sampled_data['all_images']
-                )
-                clip_score = 0.0
-                    #compute_clip_score(
-                    #    images=[im.fromarray(i) for i in sampled_data['all_images']],
-                    #    prompts=sampled_data['all_captions'],
-                    #    args=args,
-                    #    device=accelerator.device,
-                    #    how_many=args.total_eval_samples
-                    #)
+                fid, clip_score = compute_scores(
+                        images=sampled_data[0],
+                        prompts=sampled_data[1],
+                        args=args,
+                        device=accelerator.device,
+                        how_many=args.total_eval_samples
+                    )
                 logs = {'fid': fid, 'clip_score': float(clip_score)}
                 self.accelerator.log(
                     logs,
@@ -620,6 +605,8 @@ def parse_args():
     parser.add_argument("--model_id", type=str, default="runwayml/stable-diffusion-v1-5")
     parser.add_argument("--output_path", type=str, default="/mnt/localssd/test_stable_diffusion_coco")
     parser.add_argument("--log_path", type=str, default="log_stable_diffusion_coco")
+    parser.add_argument("--coco_ref_stats_path", type=str, default='stats/fid_stats_mscoco256_val.npz')
+    parser.add_argument("--inception_path", type=str, default='stats/pt_inception-2015-12-05-6726825d.pth')
     parser.add_argument("--train_iters", type=int, default=1000000)
     parser.add_argument("--checkpointing_steps", type=int, default=100)
     parser.add_argument("--log_iters", type=int, default=100)

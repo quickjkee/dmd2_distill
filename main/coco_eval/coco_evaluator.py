@@ -8,6 +8,7 @@ from PIL import Image
 import numpy as np 
 import shutil
 from transformers import AutoProcessor, AutoModel
+from main.coco_eval.fid_score_in_memory import calculate_fid
 import torch 
 import time 
 import os 
@@ -143,7 +144,7 @@ def calc_pick_and_clip_scores(model, image_inputs, text_inputs, batch_size=50):
 
 
 @torch.no_grad()
-def compute_clip_score(
+def compute_scores(
     images, prompts, args, device="cuda", how_many=30000):
     print("Computing CLIP score")
     clip_preprocessor = AutoProcessor.from_pretrained(args.clip_model_name_or_path)
@@ -165,8 +166,9 @@ def compute_clip_score(
     print(len(image_inputs), len(text_inputs))
 
     clip_score = calc_pick_and_clip_scores(clip_model, image_inputs, text_inputs).mean()
+    fid_score = calculate_fid(images, args.coco_ref_stats_path, inception_path=args.inception_path)
 
-    return clip_score
+    return fid_score, clip_score
 
 @torch.no_grad()
 def compute_image_reward(

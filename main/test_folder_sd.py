@@ -7,17 +7,21 @@ from accelerate.logging import get_logger
 from main.utils import SDTextDataset
 from accelerate.utils import set_seed
 from accelerate import Accelerator
-from tqdm import tqdm 
-import numpy as np 
-import argparse 
-import logging 
-import wandb 
-import torch 
-import glob 
-import time 
-import os 
+from torchvision.transforms import ToPILImage
+from tqdm import tqdm
+import numpy as np
+import argparse
+import torch.distributed as dist
+import pandas as pd
+import logging
+import wandb
+import torch
+import glob
+import time
+import os
 
 logger = get_logger(__name__, log_level="INFO")
+
 
 def create_generator(checkpoint_path, base_model=None):
     if base_model is None:
@@ -34,12 +38,12 @@ def create_generator(checkpoint_path, base_model=None):
     while True:
         try:
             state_dict = torch.load(checkpoint_path, map_location="cpu")
-            break 
+            break
         except:
             print(f"fail to load checkpoint {checkpoint_path}")
             time.sleep(1)
 
-            counter += 1 
+            counter += 1
 
             if counter > 100:
                 return None
@@ -52,12 +56,13 @@ def create_generator(checkpoint_path, base_model=None):
 
     # print(generator.load_state_dict(new_state_dict, strict=True))
     print(generator.load_state_dict(state_dict, strict=True))
-    return generator 
+    return generator
+
 
 def get_x0_from_noise(sample, model_output, timestep):
     # alpha_prod_t = alphas_cumprod[timestep].reshape(-1, 1, 1, 1)
     # 0.0047 corresponds to the alphas_cumprod of the last timestep (999)
-    alpha_prod_t = (torch.ones_like(timestep).float() * 0.0047).reshape(-1, 1, 1, 1) 
+    alpha_prod_t = (torch.ones_like(timestep).float() * 0.0047).reshape(-1, 1, 1, 1)
     beta_prod_t = 1 - alpha_prod_t
 
     pred_original_sample = (sample - beta_prod_t ** (0.5) * model_output) / alpha_prod_t ** (0.5)
@@ -137,31 +142,64 @@ def log_validation(accelerator, tokenizer, vae, text_encoder, current_model, ste
             logger.warn(f"image logging not implemented for {tracker.name}")
 
 
+def prepare_val_prompts(path, bs=20, max_cnt=5000):
+    df = pd.read_csv(path)
+    all_text = list(df['caption'])
+    all_text = all_text[:max_cnt]
+
+    num_batches = ((len(all_text) - 1) // (bs * dist.get_world_size()) + 1) * dist.get_world_size()
+    all_batches = np.array_split(np.array(all_text), num_batches)
+    rank_batches = all_batches[dist.get_rank():: dist.get_world_size()]
+
+    index_list = np.arange(len(all_text))
+    all_batches_index = np.array_split(index_list, num_batches)
+    rank_batches_index = all_batches_index[dist.get_rank():: dist.get_world_size()]
+    return rank_batches, rank_batches_index, all_text
+
+
 @torch.no_grad()
-def sample(accelerator, current_model, vae, text_encoder, dataloader, args, teacher_pipeline=None):
+def sample(accelerator, current_model, vae, tokenizer, text_encoder, prompts_path, args, teacher_pipeline=None):
+
+    # Preparation
+    ##########################################
     current_model.eval()
-    all_images = [] 
-    all_captions = [] 
-    counter = 0 
+    set_seed(args.seed + accelerator.process_index)
+    generator = torch.Generator().manual_seed(args.seed)
+    rank_batches, rank_batches_index, all_prompts = prepare_val_prompts(
+        prompts_path, bs=args.batch_size, max_cnt=args.total_eval_samples
+    )
+    ##########################################
 
-    set_seed(args.seed+accelerator.process_index)
+    local_images = []
+    local_text_idxs = []
+    for cnt, mini_batch in enumerate(tqdm(rank_batches, unit='batch', disable=(dist.get_rank() != 0))):
 
-    for index, batch_prompts in tqdm(enumerate(dataloader), disable=not accelerator.is_main_process, total=args.total_eval_samples // args.eval_batch_size // accelerator.num_processes):
-        # prepare generator input 
-        prompt_inputs = batch_prompts['text_input_ids_one'].to(accelerator.device).reshape(-1, batch_prompts['text_input_ids_one'].shape[-1])
-        batch_text_caption_embedding = text_encoder(prompt_inputs)[0]
+        # Inputs
+        ##########################################
+        text_input_ids_one = tokenizer(
+            mini_batch,
+            padding="max_length",
+            max_length=tokenizer.model_max_length,
+            truncation=True,
+            return_tensors="pt",
+        ).input_ids
+        text_input_ids_one = text_input_ids_one.to(accelerator.device).reshape(-1, text_input_ids_one.shape[-1])
+        text_embedding = text_encoder(text_input_ids_one)[0]
 
-        timesteps = torch.ones(len(prompt_inputs), device=accelerator.device, dtype=torch.long)
+        timesteps = torch.ones(len(text_embedding), device=accelerator.device, dtype=torch.long)
 
-        noise = torch.randn(len(prompt_inputs), 4, 
-            args.latent_resolution, args.latent_resolution, 
-            dtype=torch.float32,
-            generator=torch.Generator().manual_seed(index)
-        ).to(accelerator.device) 
+        noise = torch.randn(len(text_embedding), 4,
+                            args.latent_resolution, args.latent_resolution,
+                            dtype=torch.float32,
+                            generator=generator,
+                            ).to(accelerator.device)
+        ##########################################
 
+        # Sampling
+        ##########################################
         if args.sd_teacher:
             eval_images = teacher_pipeline(
-                prompt_embeds=batch_text_caption_embedding,
+                prompt_embeds=text_embedding,
                 latents=noise,
                 guidance_scale=args.guidance_scale,
                 output_type="np",
@@ -171,202 +209,49 @@ def sample(accelerator, current_model, vae, text_encoder, dataloader, args, teac
         else:
             # generate images and convert between noise and data prediction if needed
             eval_images = current_model(
-                noise, timesteps.long() * (args.num_train_timesteps-1), batch_text_caption_embedding
-            ).sample 
+                noise, timesteps.long() * (args.num_train_timesteps - 1), text_embedding
+            ).sample
 
             eval_images = get_x0_from_noise(
                 noise, eval_images, timesteps
-                )
+            )
 
             # decode the latents and cast to uint8 RGB
             vae = vae.to(eval_images.dtype)
             eval_images = vae.decode(eval_images * 1 / 0.18215).sample.float()
             eval_images = ((eval_images + 1.0) * 127.5).clamp(0, 255).to(torch.uint8).permute(0, 2, 3, 1)
-            eval_images = eval_images.contiguous() 
+            eval_images = eval_images.contiguous()
+        ##########################################
 
-        gathered_images = accelerator.gather(eval_images)
-        all_images.append(gathered_images.cpu().numpy())
+        # Aggregation
+        ##########################################
+        for text_idx, global_idx in enumerate(rank_batches_index[cnt]):
+            img_tensor = torch.tensor(np.array(eval_images[text_idx]))
+            local_images.append(img_tensor)
+            local_text_idxs.append(global_idx)
 
-        all_captions.append(batch_prompts['key'])
+        local_images = torch.stack(local_images).cuda()
+        local_text_idxs = torch.tensor(local_text_idxs).cuda()
 
-        counter += len(gathered_images)
+        gathered_images = [torch.zeros_like(local_images) for _ in range(dist.get_world_size())]
+        gathered_text_idxs = [torch.zeros_like(local_text_idxs) for _ in range(dist.get_world_size())]
 
-        if counter >= args.total_eval_samples:
-            break
+        dist.all_gather(gathered_images, local_images)  # gather not supported with NCCL
+        dist.all_gather(gathered_text_idxs, local_text_idxs)
 
-    all_images = np.concatenate(all_images, axis=0)[:args.total_eval_samples] 
-    if accelerator.is_main_process:
-        print("all_images len ", len(all_images))
-
-    all_captions = [caption for sublist in all_captions for caption in sublist]
-    data_dict = {"all_images": all_images, "all_captions": all_captions}
-
-    return data_dict 
-
-@torch.no_grad()
-def evaluate():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--folder", type=str, required=True, help="pass to folder list")
-    parser.add_argument("--wandb_entity", type=str)
-    parser.add_argument("--wandb_project", type=str)
-    parser.add_argument("--wandb_name", type=str)
-    parser.add_argument("--eval_batch_size", type=int, default=10)
-    parser.add_argument("--latent_resolution", type=int, default=64)
-    parser.add_argument("--image_resolution", type=int, default=512)
-    parser.add_argument("--num_train_timesteps", type=int, default=1000)
-    parser.add_argument("--test_visual_batch_size", type=int, default=64)
-    parser.add_argument("--per_image_object", type=int, default=64)
-    parser.add_argument("--seed", type=int, default=10)
-    parser.add_argument("--anno_path", type=str)
-    parser.add_argument("--eval_res", type=int, default=256)
-    parser.add_argument("--ref_dir", type=str)
-    parser.add_argument("--total_eval_samples", type=int, default=30000)
-    parser.add_argument("--model_id", type=str, default="runwayml/stable-diffusion-v1-5")
-    parser.add_argument("--pred_eps", action="store_true")
-    parser.add_argument("--skip_eval", action="store_true")
-    parser.add_argument("--clip_score", action="store_true")
-    parser.add_argument("--sd_teacher", action="store_true")
-    parser.add_argument("--sde", action="store_true")
-    parser.add_argument("--guidance_scale", type=float)
-    parser.add_argument("--num_inference_steps", type=int)
-    args = parser.parse_args()
-
-    folder = args.folder
-    evaluated_checkpoints = set() 
-    overall_stats = {} 
-
-    # initialize accelerator 
-    accelerator_project_config = ProjectConfiguration(logging_dir=args.folder)
-    accelerator = Accelerator(
-        gradient_accumulation_steps=1,
-        mixed_precision="no",
-        log_with="wandb",
-        project_config=accelerator_project_config
-    )
-
-    assert accelerator.num_processes == 1, "only support single gpu for now"
-
-    logging.basicConfig(
-        format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
-        datefmt="%m/%d/%Y %H:%M:%S",
-        level=logging.INFO,
-    )
-    logger.info(accelerator.state, main_process_only=False)
-
-    torch.backends.cuda.matmul.allow_tf32 = True
-    torch.backends.cudnn.allow_tf32 = True 
-
-    logger.info(f"folder to evaluate: {folder}", main_process_only=True)
-
-    # initialize wandb 
-    if accelerator.is_main_process:
-        run = wandb.init(config=args, dir=args.folder, **{"mode": "online", "entity": args.wandb_entity, "project": args.wandb_project})
-        wandb.run.name = args.wandb_name 
-        logger.info(f"wandb run dir: {run.dir}", main_process_only=True)
-
-    # initialize model (UNet Generator, Text Encoder and VAE Decoder)
-
-    generator = None
-
-    vae = AutoencoderKL.from_pretrained(
-        args.model_id, 
-        subfolder="vae"
-    ).to(accelerator.device).float()
-
-    text_encoder = CLIPTextModel.from_pretrained(
-        args.model_id, subfolder="text_encoder"
-    ).to(accelerator.device).float()
-    
-    if args.sd_teacher:
-        teacher_pipeline = StableDiffusionPipeline.from_pretrained("runwayml/stable-diffusion-v1-5", torch_dtype=torch.float32)
-        teacher_pipeline = teacher_pipeline.to(accelerator.device)
-
-        if args.sde:
-            teacher_pipeline.scheduler = DDPMScheduler.from_config(teacher_pipeline.scheduler.config)
-
-        teacher_pipeline.set_progress_bar_config(disable=True)
-        teacher_pipeline.safety_checker = None
-    else:
-        teacher_pipeline = None
-    # initialize tokenizer and dataset
-
-    tokenizer = CLIPTokenizer.from_pretrained(
-        args.model_id, subfolder="tokenizer"
-    )
-    caption_dataset = SDTextDataset(args.anno_path, tokenizer, is_sdxl=False)
-
-    caption_dataloader = torch.utils.data.DataLoader(
-        caption_dataset, batch_size=args.eval_batch_size, 
-        shuffle=False, drop_last=False, num_workers=8
-    ) 
-    caption_dataloader = accelerator.prepare(caption_dataloader)
-
-    while True:
-        new_checkpoints = sorted(glob.glob(os.path.join(folder, "*checkpoint_model_*")))
-        new_checkpoints = set(new_checkpoints) - evaluated_checkpoints
-        new_checkpoints = sorted(list(new_checkpoints))
-
-        if len(new_checkpoints) == 0:
-            continue 
-
-        for checkpoint in new_checkpoints:
-            logger.info(f"Evaluating {folder} {checkpoint}", main_process_only=True)
-            model_index = int(checkpoint.replace("/", "").split("_")[-1]) 
-
-            generator = create_generator(
-                os.path.join(checkpoint, "pytorch_model.bin"), 
-                base_model=generator
+        images, prompts = [], []
+        if dist.get_rank() == 0:
+            gathered_images = np.concatenate(
+                [images.cpu().numpy() for images in gathered_images], axis=0
             )
-
-            if generator is None:
-                continue
-
-            generator = generator.to(accelerator.device)
-
-            # generate images 
-            data_dict = sample(
-                accelerator,
-                generator,
-                vae,
-                text_encoder,
-                caption_dataloader,
-                args,
-                model_index,
-                teacher_pipeline=teacher_pipeline
+            gathered_text_idxs = np.concatenate(
+                [text_idxs.cpu().numpy() for text_idxs in gathered_text_idxs], axis=0
             )
-            torch.cuda.empty_cache()
+            for image, global_idx in zip(gathered_images, gathered_text_idxs):
+                images.append(ToPILImage()(image))
+                prompts.append(all_prompts[global_idx])
+        ##########################################
 
-            if accelerator.is_main_process:
-                if not args.skip_eval:
-                    print("start fid eval")
-                    fid = evaluate_model(
-                        args, accelerator.device, data_dict["all_images"]
-                    )
-                    stats = {
-                        "fid": fid
-                    }
-
-                    if args.clip_score:
-                        clip_score = compute_clip_score(
-                            images=data_dict["all_images"],
-                            captions=data_dict["all_captions"],
-                            clip_model="ViT-G/14",
-                            device=accelerator.device,
-                            how_many=args.total_eval_samples
-                        )
-                        print(f"checkpoint {checkpoint} clip score {clip_score}")
-                        stats['clip_score'] = float(clip_score)
-                    
-                    print(f"checkpoint {checkpoint} fid {fid}")
-                    
-                    overall_stats[checkpoint] = stats
-                    wandb.log(
-                        stats,
-                        step=model_index
-                    )
-            accelerator.wait_for_everyone()
-        evaluated_checkpoints.update(new_checkpoints)
-
-
-if __name__ == "__main__":
-    evaluate()    
+        # Done.
+        dist.barrier()
+        return images, prompts
