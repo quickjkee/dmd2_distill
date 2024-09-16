@@ -110,7 +110,7 @@ def log_validation(accelerator, tokenizer, vae, text_encoder, current_model, ste
                                 ).to(accelerator.device)
             timesteps = torch.ones(len(text_embedding), device=accelerator.device, dtype=torch.long)
 
-            if args.sd_teacher:
+            if teacher_pipeline:
                 eval_images = teacher_pipeline(
                     prompt_embeds=text_embedding,
                     latents=noise,
