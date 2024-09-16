@@ -557,7 +557,7 @@ class Trainer:
                                text_encoder=self.model.text_encoder,
                                current_model=self.model.feedforward_model,
                                step=self.step,
-                               args=args)
+                               args=args, teacher_pipeline=teacher_pipeline)
 
             self.model.vae = self.model.vae.to(torch.float16)
 

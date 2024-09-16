@@ -70,7 +70,7 @@ def get_x0_from_noise(sample, model_output, timestep):
 
 
 @torch.no_grad()
-def log_validation(accelerator, tokenizer, vae, text_encoder, current_model, step, args):
+def log_validation(accelerator, tokenizer, vae, text_encoder, current_model, step, args, teacher_pipeline=None):
     validation_prompts = [
         "portrait photo of a girl, photograph, highly detailed face, depth of field, moody light, golden hour, style by Dan Winters, Russell James, Steve McCurry, centered, extremely detailed, Nikon D850, award winning photography",
         "Self-portrait oil painting, a beautiful cyborg with golden hair, 8k",
@@ -110,19 +110,29 @@ def log_validation(accelerator, tokenizer, vae, text_encoder, current_model, ste
                                 ).to(accelerator.device)
             timesteps = torch.ones(len(text_embedding), device=accelerator.device, dtype=torch.long)
 
-            eval_images = current_model(
-                noise, timesteps.long() * (args.num_train_timesteps - 1), text_embedding
-            ).sample
+            if args.sd_teacher:
+                eval_images = teacher_pipeline(
+                    prompt_embeds=text_embedding,
+                    latents=noise,
+                    guidance_scale=args.real_guidance_scale,
+                    output_type="np",
+                    num_inference_steps=50
+                ).images
+                eval_images = (torch.tensor(eval_images, dtype=torch.float32) * 255.0).to(torch.uint8)
+            else:
+                eval_images = current_model(
+                    noise, timesteps.long() * (args.num_train_timesteps - 1), text_embedding
+                ).sample
 
-            eval_images = get_x0_from_noise(
-                noise, eval_images, timesteps
-            )
+                eval_images = get_x0_from_noise(
+                    noise, eval_images, timesteps
+                )
 
-            # decode the latents and cast to uint8 RGB
-            vae = vae.to(eval_images.dtype)
-            eval_images = vae.decode(eval_images * 1 / 0.18215).sample.float()
-            eval_images = ((eval_images + 1.0) * 127.5).clamp(0, 255).to(torch.uint8).permute(0, 2, 3, 1)
-            eval_images = eval_images.contiguous()
+                # decode the latents and cast to uint8 RGB
+                vae = vae.to(eval_images.dtype)
+                eval_images = vae.decode(eval_images * 1 / 0.18215).sample.float()
+                eval_images = ((eval_images + 1.0) * 127.5).clamp(0, 255).to(torch.uint8).permute(0, 2, 3, 1)
+                eval_images = eval_images.contiguous()
             images.append(eval_images.cpu().numpy())
 
         images = np.concatenate(images, axis=0)
