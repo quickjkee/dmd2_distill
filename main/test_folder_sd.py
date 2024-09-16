@@ -207,7 +207,7 @@ def sample(accelerator, current_model, vae, tokenizer, text_encoder, prompts_pat
 
         # Sampling
         ##########################################
-        if args.sd_teacher:
+        if teacher_pipeline is not None:
             eval_images = teacher_pipeline(
                 prompt_embeds=text_embedding,
                 latents=noise,
