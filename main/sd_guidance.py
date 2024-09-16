@@ -234,11 +234,13 @@ class SDGuidance(nn.Module):
 
             p_real = (latents - pred_real_image)
             p_fake = (latents - pred_fake_image)
-
-            grad = (p_real - p_fake) / torch.abs(p_real).mean(dim=[1, 2, 3], keepdim=True) 
+            w = torch.abs(p_real).mean(dim=[1, 2, 3], keepdim=True)
+            grad = (p_real - p_fake) / w
             grad = torch.nan_to_num(grad)
 
-        loss = 0.5 * F.mse_loss(original_latents.float(), (original_latents-grad).detach().float(), reduction="mean")         
+        #loss = 0.5 * F.mse_loss(original_latents.float(), (original_latents-grad).detach().float(), reduction="mean")
+        loss = ((-pred_real_image + pred_fake_image) * original_latents) / w
+        loss = loss.mean()
 
         loss_dict = {
             "loss_dm": loss 
@@ -349,20 +351,6 @@ class SDGuidance(nn.Module):
                 image, text_embedding, unet_added_conditions
             )
             loss_dict.update(clean_cls_loss_dict)
-
-        # cls_loss_grad = torch.autograd.grad(
-        #     loss_dict["gen_cls_loss"], image, retain_graph=True
-        # )[0]
-
-        # dm_loss_grad = torch.autograd.grad(
-        #     loss_dict["loss_dm"], image, retain_graph=True
-        # )[0]
-
-        # if self.accelerator.is_main_process:
-        #     print("cls_loss_grad", cls_loss_grad.abs().mean().item())
-        #     print("dm_loss_grad", dm_loss_grad.abs().mean().item())
-
-        # import pdb; pdb.set_trace()
 
         return loss_dict, log_dict 
 
