@@ -7,6 +7,7 @@ from transformers import CLIPTextModel
 from accelerate.utils import broadcast
 from peft import LoraConfig
 from torch import nn
+import copy
 import torch 
 
 class SDUniModel(nn.Module):
@@ -233,7 +234,8 @@ class SDUniModel(nn.Module):
                 compute_generator_gradient=True,
                 generator_turn=False,
                 guidance_turn=False,
-                guidance_data_dict=None
+                guidance_data_dict=None,
+                step=None,
     ):
         assert (generator_turn and not guidance_turn) or (guidance_turn and not generator_turn) 
 
@@ -294,11 +296,12 @@ class SDUniModel(nn.Module):
                 generator_data_dict = {
                     "image": generated_image,
                     "text_embedding": text_embedding,
+                    'noisy_image': (noisy_image, timesteps),
                     "pooled_text_embedding": pooled_text_embedding,
                     "uncond_embedding": uncond_embedding,
                     "real_train_dict": real_train_dict,
                     "unet_added_conditions": unet_added_conditions,
-                    "uncond_unet_added_conditions": uncond_unet_added_conditions
+                    "uncond_unet_added_conditions": uncond_unet_added_conditions,
                 } 
 
                 # avoid any side effects of gradient accumulation
@@ -309,6 +312,14 @@ class SDUniModel(nn.Module):
                     generator_data_dict=generator_data_dict
                 )
                 self.guidance_model.requires_grad_(True)
+
+                # Update progressive regularizator
+                self.guidance_model.module.step += 1
+                if (self.guidance_model.module.step + 1) % 25 == 0:
+                    GGG = copy.deepcopy(self.feedforward_model).eval().requires_grad_(True)
+                    self.guidance_model.module.prev_generator_collection.append(GGG)
+                    if (self.guidance_model.module.step + 1) % 50 == 0:
+                        self.guidance_model.module.prev_generator_collection.pop(0)
             else:
                 loss_dict = {}
                 log_dict = {} 

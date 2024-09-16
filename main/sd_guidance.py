@@ -4,43 +4,45 @@ from main.sd_unet_forward import classify_forward
 import torch.nn.functional as F
 import torch.nn as nn
 import torch
-import types 
+import copy
+import types
 
-def predict_noise(unet, noisy_latents, text_embeddings, uncond_embedding, timesteps, 
+def predict_noise(unet, noisy_latents, text_embeddings, uncond_embedding, timesteps,
     guidance_scale=1.0, unet_added_conditions=None, uncond_unet_added_conditions=None
 ):
     CFG_GUIDANCE = guidance_scale > 1
 
     if CFG_GUIDANCE:
-        model_input = torch.cat([noisy_latents] * 2) 
-        embeddings = torch.cat([uncond_embedding, text_embeddings]) 
-        timesteps = torch.cat([timesteps] * 2) 
+        model_input = torch.cat([noisy_latents] * 2)
+        embeddings = torch.cat([uncond_embedding, text_embeddings])
+        timesteps = torch.cat([timesteps] * 2)
 
         if unet_added_conditions is not None:
-            assert uncond_unet_added_conditions is not None 
+            assert uncond_unet_added_conditions is not None
             condition_input = {}
             for key in unet_added_conditions.keys():
                 condition_input[key] = torch.cat(
-                    [uncond_unet_added_conditions[key], unet_added_conditions[key]] # should be uncond, cond, check the order  
+                    [uncond_unet_added_conditions[key], unet_added_conditions[key]] # should be uncond, cond, check the order
                 )
         else:
-            condition_input = None 
+            condition_input = None
 
         noise_pred = unet(model_input, timesteps, embeddings, added_cond_kwargs=condition_input).sample
         noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
-        noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond) 
+        noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond)
     else:
-        model_input = noisy_latents 
+        model_input = noisy_latents
         embeddings = text_embeddings
-        timesteps = timesteps    
+        timesteps = timesteps
         noise_pred = unet(model_input, timesteps, embeddings, added_cond_kwargs=unet_added_conditions).sample
 
-    return noise_pred  
+    return noise_pred
 
 class SDGuidance(nn.Module):
     def __init__(self, args, accelerator):
         super().__init__()
-        self.args = args 
+        self.args = args
+        self.step = 0
 
         self.real_unet = UNet2DConditionModel.from_pretrained(
             args.model_id,
@@ -48,7 +50,10 @@ class SDGuidance(nn.Module):
         ).float()
 
         self.real_unet.requires_grad_(False)
-        self.gan_alone = args.gan_alone 
+        self.prev_generator_collection = []
+        self.prev_generator_collection.append(copy.deepcopy(self.real_unet).to(accelerator.device))
+
+        self.gan_alone = args.gan_alone
 
         self.fake_unet = UNet2DConditionModel.from_pretrained(
             args.model_id,
@@ -58,7 +63,7 @@ class SDGuidance(nn.Module):
         self.fake_unet.requires_grad_(True)
 
         # somehow FSDP requires at least one network with dense parameters (models from diffuser are lazy initialized so their parameters are empty in fsdp mode)
-        self.dummy_network = DummyNetwork() 
+        self.dummy_network = DummyNetwork()
         self.dummy_network.requires_grad_(False)
 
         # we move real unet to half precision
@@ -73,26 +78,26 @@ class SDGuidance(nn.Module):
             args.model_id,
             subfolder="scheduler"
         )
-        
+
         alphas_cumprod = self.scheduler.alphas_cumprod
         self.register_buffer(
             "alphas_cumprod",
             alphas_cumprod
         )
 
-        self.num_train_timesteps = args.num_train_timesteps 
+        self.num_train_timesteps = args.num_train_timesteps
         self.min_step = int(args.min_step_percent * self.scheduler.num_train_timesteps)
         self.max_step = int(args.max_step_percent * self.scheduler.num_train_timesteps)
-        
-        self.real_guidance_scale = args.real_guidance_scale 
+
+        self.real_guidance_scale = args.real_guidance_scale
         self.fake_guidance_scale = args.fake_guidance_scale
 
         assert self.fake_guidance_scale == 1, "no guidance for fake"
 
         self.use_fp16 = args.use_fp16
 
-        self.cls_on_clean_image = args.cls_on_clean_image 
-        self.gen_cls_loss = args.gen_cls_loss 
+        self.cls_on_clean_image = args.cls_on_clean_image
+        self.gen_cls_loss = args.gen_cls_loss
 
         self.accelerator = accelerator
 
@@ -106,10 +111,10 @@ class SDGuidance(nn.Module):
 
             if args.sdxl:
                 self.cls_pred_branch = nn.Sequential(
-                    nn.Conv2d(kernel_size=4, in_channels=1280, out_channels=1280, stride=2, padding=1), # 32x32 -> 16x16 
+                    nn.Conv2d(kernel_size=4, in_channels=1280, out_channels=1280, stride=2, padding=1), # 32x32 -> 16x16
                     nn.GroupNorm(num_groups=32, num_channels=1280),
                     nn.SiLU(),
-                    nn.Conv2d(kernel_size=4, in_channels=1280, out_channels=1280, stride=2, padding=1), # 16x16 -> 8x8 
+                    nn.Conv2d(kernel_size=4, in_channels=1280, out_channels=1280, stride=2, padding=1), # 16x16 -> 8x8
                     nn.GroupNorm(num_groups=32, num_channels=1280),
                     nn.SiLU(),
                     nn.Conv2d(kernel_size=4, in_channels=1280, out_channels=1280, stride=2, padding=1), # 8x8 -> 4x4
@@ -123,7 +128,7 @@ class SDGuidance(nn.Module):
             else:
                 # SDv1.5 
                 self.cls_pred_branch = nn.Sequential(
-                    nn.Conv2d(kernel_size=4, in_channels=1280, out_channels=1280, stride=2, padding=1), # 8x8 -> 4x4 
+                    nn.Conv2d(kernel_size=4, in_channels=1280, out_channels=1280, stride=2, padding=1), # 8x8 -> 4x4
                     nn.GroupNorm(num_groups=32, num_channels=1280),
                     nn.SiLU(),
                     nn.Conv2d(kernel_size=4, in_channels=1280, out_channels=1280, stride=4, padding=0), # 4x4 -> 1x1
@@ -134,10 +139,10 @@ class SDGuidance(nn.Module):
 
             self.cls_pred_branch.requires_grad_(True)
 
-        self.sdxl = args.sdxl 
-        self.gradient_checkpointing = args.gradient_checkpointing 
+        self.sdxl = args.sdxl
+        self.gradient_checkpointing = args.gradient_checkpointing
 
-        self.diffusion_gan = args.diffusion_gan 
+        self.diffusion_gan = args.diffusion_gan
         self.diffusion_gan_max_timestep = args.diffusion_gan_max_timestep
 
         self.network_context_manager = torch.autocast(device_type="cuda", dtype=torch.bfloat16) if self.use_fp16 else NoOpContext()
@@ -166,82 +171,103 @@ class SDGuidance(nn.Module):
 
 
     def compute_distribution_matching_loss(
-        self, 
+        self,
         latents,
+        noisy_image,
         text_embedding,
         uncond_embedding,
         unet_added_conditions,
         uncond_unet_added_conditions
     ):
-        original_latents = latents 
+        original_latents = latents
         batch_size = latents.shape[0]
         with torch.no_grad():
+
+            # Inputs
+            ##############################################
             timesteps = torch.randint(
-                self.min_step, 
+                self.min_step,
                 min(self.max_step+1, self.num_train_timesteps),
-                [batch_size], 
+                [batch_size],
                 device=latents.device,
                 dtype=torch.long
             )
-
             noise = torch.randn_like(latents)
-
             noisy_latents = self.scheduler.add_noise(latents, noise, timesteps)
+            ##############################################
 
-            # run at full precision as autocast and no_grad doesn't work well together 
+            # Fake score
+            ##############################################
             pred_fake_noise = predict_noise(
-                self.fake_unet, noisy_latents, text_embedding, uncond_embedding, 
+                self.fake_unet, noisy_latents, text_embedding, uncond_embedding,
                 timesteps, guidance_scale=self.fake_guidance_scale,
                 unet_added_conditions=unet_added_conditions,
                 uncond_unet_added_conditions=uncond_unet_added_conditions
-            )  
+            )
 
             pred_fake_image = get_x0_from_noise(
                 noisy_latents.double(), pred_fake_noise.double(), self.alphas_cumprod.double(), timesteps
             )
+            ##############################################
 
+            # Real score
+            ##############################################
             if self.use_fp16:
                 if self.sdxl:
-                    bf16_unet_added_conditions = {} 
-                    bf16_uncond_unet_added_conditions = {} 
+                    bf16_unet_added_conditions = {}
+                    bf16_uncond_unet_added_conditions = {}
 
                     for k,v in unet_added_conditions.items():
                         bf16_unet_added_conditions[k] = v.to(torch.bfloat16)
                     for k,v in uncond_unet_added_conditions.items():
                         bf16_uncond_unet_added_conditions[k] = v.to(torch.bfloat16)
                 else:
-                    bf16_unet_added_conditions = unet_added_conditions 
+                    bf16_unet_added_conditions = unet_added_conditions
                     bf16_uncond_unet_added_conditions = uncond_unet_added_conditions
 
                 pred_real_noise = predict_noise(
-                    self.real_unet, noisy_latents.to(torch.bfloat16), text_embedding.to(torch.bfloat16), 
-                    uncond_embedding.to(torch.bfloat16), 
+                    self.real_unet, noisy_latents.to(torch.bfloat16), text_embedding.to(torch.bfloat16),
+                    uncond_embedding.to(torch.bfloat16),
                     timesteps, guidance_scale=self.real_guidance_scale,
                     unet_added_conditions=bf16_unet_added_conditions,
                     uncond_unet_added_conditions=bf16_uncond_unet_added_conditions
-                ) 
+                )
             else:
                 pred_real_noise = predict_noise(
-                    self.real_unet, noisy_latents, text_embedding, uncond_embedding, 
+                    self.real_unet, noisy_latents, text_embedding, uncond_embedding,
                     timesteps, guidance_scale=self.real_guidance_scale,
                     unet_added_conditions=unet_added_conditions,
                     uncond_unet_added_conditions=uncond_unet_added_conditions
                 )
-
             pred_real_image = get_x0_from_noise(
                 noisy_latents.double(), pred_real_noise.double(), self.alphas_cumprod.double(), timesteps
-            )     
+            )
+            ##############################################
 
             with torch.no_grad():
                 p_real = (latents - pred_real_image)
                 w = torch.abs(p_real).mean(dim=[1, 2, 3], keepdim=True)
 
-        #loss = 0.5 * F.mse_loss(original_latents.float(), (original_latents-grad).detach().float(), reduction="mean")
         loss = ((-pred_real_image + pred_fake_image) * original_latents) / w
-        loss = loss.mean()
+        loss = loss.sum(dim=(1, 2, 3))
+
+        if True:
+            with torch.no_grad():
+                prev_original_latents = self.prev_generator_collection[0](
+                    noisy_image[0], noisy_image[1].long(),
+                    text_embedding, added_cond_kwargs=unet_added_conditions
+                ).sample
+
+        y_real_feat = F.normalize(original_latents.view(loss.shape[0], -1), p=2, dim=-1)
+        y_prev_feat = F.normalize(prev_original_latents.view(loss.shape[0], -1), p=2, dim=-1)
+        logits = y_real_feat @ y_prev_feat.t()
+        targets = torch.arange(logits.size(0)).to(logits.device)
+        loss_reg = F.cross_entropy(logits, targets, reduction='none')
+
+        loss = loss + loss_reg * 10
 
         loss_dict = {
-            "loss_dm": loss 
+            "loss_dm": loss.mean()
         }
 
         dm_log_dict = {
@@ -271,7 +297,7 @@ class SDGuidance(nn.Module):
         timesteps = torch.randint(
             0,
             self.num_train_timesteps,
-            [batch_size], 
+            [batch_size],
             device=latents.device,
             dtype=torch.long
         )
@@ -280,7 +306,7 @@ class SDGuidance(nn.Module):
         with self.network_context_manager:
             fake_noise_pred = predict_noise(
                 self.fake_unet, noisy_latents, text_embedding, uncond_embedding,
-                timesteps, guidance_scale=1, # no guidance for training dfake 
+                timesteps, guidance_scale=1, # no guidance for training dfake
                 unet_added_conditions=unet_added_conditions,
                 uncond_unet_added_conditions=uncond_unet_added_conditions
             )
@@ -291,7 +317,7 @@ class SDGuidance(nn.Module):
             noisy_latents.double(), fake_noise_pred.double(), self.alphas_cumprod.double(), timesteps
         )
 
-        # epsilon prediction loss 
+        # epsilon prediction loss
         loss_fake = torch.mean(
             (fake_noise_pred.float() - noise.float())**2
         )
@@ -309,23 +335,24 @@ class SDGuidance(nn.Module):
             self.fake_unet.disable_gradient_checkpointing()
         return loss_dict, fake_log_dict
 
-    def compute_generator_clean_cls_loss(self, 
-        fake_image, text_embedding, 
+    def compute_generator_clean_cls_loss(self,
+        fake_image, text_embedding,
         unet_added_conditions=None
     ):
-        loss_dict = {} 
+        loss_dict = {}
 
         pred_realism_on_fake_with_grad = self.compute_cls_logits(
-            fake_image, 
-            text_embedding=text_embedding, 
+            fake_image,
+            text_embedding=text_embedding,
             unet_added_conditions=unet_added_conditions
         )
         loss_dict["gen_cls_loss"] = F.softplus(-pred_realism_on_fake_with_grad).mean()
-        return loss_dict 
+        return loss_dict
 
     def generator_forward(
         self,
         image,
+        noisy_image,
         text_embedding,
         uncond_embedding,
         unet_added_conditions=None,
@@ -337,7 +364,7 @@ class SDGuidance(nn.Module):
         # image.requires_grad_(True)
         if not self.gan_alone:
             dm_dict, dm_log_dict = self.compute_distribution_matching_loss(
-                image, text_embedding, uncond_embedding, 
+                image, noisy_image, text_embedding, uncond_embedding,
                 unet_added_conditions, uncond_unet_added_conditions
             )
 
@@ -350,21 +377,21 @@ class SDGuidance(nn.Module):
             )
             loss_dict.update(clean_cls_loss_dict)
 
-        return loss_dict, log_dict 
+        return loss_dict, log_dict
 
     def compute_guidance_clean_cls_loss(
-            self, real_image, fake_image, 
+            self, real_image, fake_image,
             real_text_embedding, fake_text_embedding,
-            real_unet_added_conditions=None, 
+            real_unet_added_conditions=None,
             fake_unet_added_conditions=None
         ):
         pred_realism_on_real = self.compute_cls_logits(
-            real_image.detach(), 
+            real_image.detach(),
             text_embedding=real_text_embedding,
             unet_added_conditions=real_unet_added_conditions
         )
         pred_realism_on_fake = self.compute_cls_logits(
-            fake_image.detach(), 
+            fake_image.detach(),
             text_embedding=fake_text_embedding,
             unet_added_conditions=fake_unet_added_conditions
         )
@@ -378,7 +405,7 @@ class SDGuidance(nn.Module):
         loss_dict = {
             "guidance_cls_loss": classification_loss
         }
-        return loss_dict, log_dict 
+        return loss_dict, log_dict
 
     def guidance_forward(
         self,
@@ -395,38 +422,39 @@ class SDGuidance(nn.Module):
             uncond_unet_added_conditions=uncond_unet_added_conditions
         )
 
-        loss_dict = fake_dict 
+        loss_dict = fake_dict
         log_dict = fake_log_dict
 
         if self.cls_on_clean_image:
             clean_cls_loss_dict, clean_cls_log_dict = self.compute_guidance_clean_cls_loss(
-                real_image=real_train_dict['images'], 
+                real_image=real_train_dict['images'],
                 fake_image=image,
                 real_text_embedding=real_train_dict['text_embedding'],
-                fake_text_embedding=text_embedding, 
+                fake_text_embedding=text_embedding,
                 real_unet_added_conditions=real_train_dict['unet_added_conditions'],
                 fake_unet_added_conditions=unet_added_conditions
             )
             loss_dict.update(clean_cls_loss_dict)
             log_dict.update(clean_cls_log_dict)
 
-        return loss_dict, log_dict 
+        return loss_dict, log_dict
 
     def forward(
         self,
         generator_turn=False,
         guidance_turn=False,
-        generator_data_dict=None, 
+        generator_data_dict=None,
         guidance_data_dict=None
-    ):    
+    ):
         if generator_turn:
             loss_dict, log_dict = self.generator_forward(
                 image=generator_data_dict["image"],
+                noisy_image=generator_data_dict['noisy_image'],
                 text_embedding=generator_data_dict["text_embedding"],
                 uncond_embedding=generator_data_dict["uncond_embedding"],
                 unet_added_conditions=generator_data_dict["unet_added_conditions"],
                 uncond_unet_added_conditions=generator_data_dict["uncond_unet_added_conditions"]
-            )   
+            )
         elif guidance_turn:
             loss_dict, log_dict = self.guidance_forward(
                 image=guidance_data_dict["image"],
@@ -435,8 +463,8 @@ class SDGuidance(nn.Module):
                 real_train_dict=guidance_data_dict["real_train_dict"],
                 unet_added_conditions=guidance_data_dict["unet_added_conditions"],
                 uncond_unet_added_conditions=guidance_data_dict["uncond_unet_added_conditions"]
-            ) 
+            )
         else:
             raise NotImplementedError
 
-        return loss_dict, log_dict 
+        return loss_dict, log_dict
