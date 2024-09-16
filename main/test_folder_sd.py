@@ -201,9 +201,9 @@ def sample(accelerator, current_model, vae, tokenizer, text_encoder, prompts_pat
             eval_images = teacher_pipeline(
                 prompt_embeds=text_embedding,
                 latents=noise,
-                guidance_scale=args.guidance_scale,
+                guidance_scale=args.real_guidance_scale,
                 output_type="np",
-                num_inference_steps=args.num_inference_steps
+                num_inference_steps=50
             ).images
             eval_images = (torch.tensor(eval_images, dtype=torch.float32) * 255.0).to(torch.uint8)
         else:

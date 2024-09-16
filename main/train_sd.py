@@ -7,6 +7,7 @@ from main.sd_image_dataset import SDImageDatasetLMDB
 from transformers import CLIPTokenizer, AutoTokenizer
 from accelerate.utils import ProjectConfiguration
 from diffusers.optimization import get_scheduler
+from diffusers import StableDiffusionPipeline
 from main.utils import SDTextDataset, cycle 
 from main.sd_unified_model import SDUniModel
 from accelerate.utils import set_seed
@@ -533,13 +534,18 @@ class Trainer:
         # Eval and log
         ##############################################################################
         if self.step % args.checkpointing_steps == 0:
+            if self.step == 0:
+                teacher_pipeline = StableDiffusionPipeline.from_pretrained("runwayml/stable-diffusion-v1-5", torch_dtype=torch.float32)
+                teacher_pipeline = teacher_pipeline.to(accelerator.device)
+            else:
+                teacher_pipeline = None
             sampled_data = sample(accelerator=accelerator,
                                   current_model=self.model.feedforward_model,
                                   vae=self.model.vae,
                                   tokenizer=self.tokenizers[0],
                                   text_encoder=self.model.text_encoder,
                                   prompts_path=args.eval_prompt_path,
-                                  args=args)
+                                  args=args, teacher_pipeline=teacher_pipeline)
             self.model.feedforward_model.train()
             self.accelerator.wait_for_everyone()
             torch.cuda.empty_cache()
