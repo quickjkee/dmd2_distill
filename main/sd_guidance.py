@@ -232,11 +232,9 @@ class SDGuidance(nn.Module):
                 noisy_latents.double(), pred_real_noise.double(), self.alphas_cumprod.double(), timesteps
             )     
 
-            p_real = (latents - pred_real_image)
-            p_fake = (latents - pred_fake_image)
-            w = torch.abs(p_real).mean(dim=[1, 2, 3], keepdim=True)
-            grad = (p_real - p_fake) / w
-            grad = torch.nan_to_num(grad)
+            with torch.no_grad():
+                p_real = (latents - pred_real_image)
+                w = torch.abs(p_real).mean(dim=[1, 2, 3], keepdim=True)
 
         #loss = 0.5 * F.mse_loss(original_latents.float(), (original_latents-grad).detach().float(), reduction="mean")
         loss = ((-pred_real_image + pred_fake_image) * original_latents) / w
@@ -250,8 +248,8 @@ class SDGuidance(nn.Module):
             "dmtrain_noisy_latents": noisy_latents.detach().float(),
             "dmtrain_pred_real_image": pred_real_image.detach().float(),
             "dmtrain_pred_fake_image": pred_fake_image.detach().float(),
-            "dmtrain_grad": grad.detach().float(),
-            "dmtrain_gradient_norm": torch.norm(grad).item()
+            "dmtrain_grad": 0.0,
+            "dmtrain_gradient_norm": 0.0
         }
 
         return loss_dict, dm_log_dict
