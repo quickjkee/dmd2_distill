@@ -547,7 +547,7 @@ class Trainer:
                                   tokenizer=self.tokenizers[0],
                                   text_encoder=self.model.text_encoder,
                                   prompts_path=args.eval_prompt_path,
-                                  args=args, teacher_pipeline=teacher_pipeline)
+                                  args=args, teacher_pipeline=None)
             self.model.feedforward_model.train()
             self.accelerator.wait_for_everyone()
             torch.cuda.empty_cache()
