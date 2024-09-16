@@ -535,7 +535,9 @@ class Trainer:
         ##############################################################################
         if self.step % args.checkpointing_steps == 0:
             if self.step == 0:
-                teacher_pipeline = StableDiffusionPipeline.from_pretrained(args.model_id, torch_dtype=torch.float32)
+                teacher_pipeline = StableDiffusionPipeline.from_pretrained(args.model_id,
+                                                                           safety_checker=None,
+                                                                           torch_dtype=torch.float32)
                 teacher_pipeline = teacher_pipeline.to(accelerator.device)
             else:
                 teacher_pipeline = None
