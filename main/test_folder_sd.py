@@ -227,7 +227,7 @@ def sample(accelerator, current_model, vae, tokenizer, text_encoder, prompts_pat
             )
 
             # decode the latents and cast to uint8 RGB
-            vae = vae.to(eval_images.dtype)
+            eval_images = eval_images.to(vae.dtype)
             eval_images = vae.decode(eval_images * 1 / 0.18215).sample.float()
             eval_images = ((eval_images + 1.0) * 127.5).clamp(0, 255).to(torch.uint8).permute(0, 2, 3, 1)
             eval_images = eval_images.contiguous().cpu()
