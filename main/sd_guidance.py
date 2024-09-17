@@ -258,13 +258,14 @@ class SDGuidance(nn.Module):
                     text_embedding, added_cond_kwargs=unet_added_conditions
                 ).sample
 
-        y_real_feat = F.normalize(original_latents.view(loss.shape[0], -1), p=2, dim=-1)
-        y_prev_feat = F.normalize(prev_original_latents.view(loss.shape[0], -1), p=2, dim=-1)
-        logits = y_real_feat @ y_prev_feat.t()
-        targets = torch.arange(logits.size(0)).to(logits.device)
-        loss_reg = F.cross_entropy(logits, targets, reduction='none')
+        #y_real_feat = F.normalize(original_latents.view(loss.shape[0], -1), p=2, dim=-1)
+        #y_prev_feat = F.normalize(prev_original_latents.view(loss.shape[0], -1), p=2, dim=-1)
+        #logits = y_real_feat @ y_prev_feat.t()
+        #targets = torch.arange(logits.size(0)).to(logits.device)
+        #loss_reg = F.cross_entropy(logits, targets, reduction='none')
+        loss_reg = ((prev_original_latents - original_latents) ** 2).sum(dim=(1,2,3))
 
-        loss = loss + loss_reg * 100
+        loss = loss + loss_reg * 10 ** (-2)
 
         loss_dict = {
             "loss_dm": loss.mean()
