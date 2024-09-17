@@ -304,6 +304,8 @@ class Trainer:
 
     # ------------------------------------------------------------------------------------------------------
     def save(self):
+        pass
+        """
         # NOTE: we save the checkpoints to two places 
         # 1. output_path: save the latest one, this is assumed to be a permanent storage
         # 2. cache_dir: save all checkpoints, this is assumed to be a temporary storage
@@ -352,6 +354,7 @@ class Trainer:
                     shutil.rmtree(os.path.join(self.cache_dir, folder))
             print("done saving")
         torch.cuda.empty_cache()
+        """
     # ------------------------------------------------------------------------------------------------------
 
     # Training fn

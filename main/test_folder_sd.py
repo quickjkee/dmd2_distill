@@ -196,7 +196,9 @@ def sample(accelerator, current_model, vae, tokenizer, text_encoder, prompts_pat
         text_input_ids_one = text_input_ids_one.to(accelerator.device).reshape(-1, text_input_ids_one.shape[-1])
         text_embedding = text_encoder(text_input_ids_one)[0]
 
-        timesteps = torch.ones(len(text_embedding), device=accelerator.device, dtype=torch.long)
+        timesteps = torch.ones(len(text_embedding),
+                               device=text_embedding.device,
+                               dtype=torch.long) * args.conditioning_timestep
 
         noise = torch.randn(len(text_embedding), 4,
                             args.latent_resolution, args.latent_resolution,
@@ -219,7 +221,7 @@ def sample(accelerator, current_model, vae, tokenizer, text_encoder, prompts_pat
         else:
             # generate images and convert between noise and data prediction if needed
             eval_images = current_model(
-                noise, timesteps.long() * (args.num_train_timesteps - 1), text_embedding
+                noise, timesteps.long(), text_embedding
             ).sample
 
             eval_images = get_x0_from_noise(
