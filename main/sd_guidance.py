@@ -264,7 +264,7 @@ class SDGuidance(nn.Module):
         targets = torch.arange(logits.size(0)).to(logits.device)
         loss_reg = F.cross_entropy(logits, targets, reduction='none')
 
-        loss = loss + loss_reg * 500
+        loss = loss + loss_reg * 100
 
         loss_dict = {
             "loss_dm": loss.mean()
