@@ -316,9 +316,10 @@ class SDUniModel(nn.Module):
                 # Update progressive regularizator
                 self.guidance_model.module.step += 1
                 if (self.guidance_model.module.step + 1) % 25 == 0:
-                    self.guidance_model.module.prev_generator_collection.pop(0)
                     GGG = copy.deepcopy(self.feedforward_model).eval().requires_grad_(True)
                     self.guidance_model.module.prev_generator_collection.append(GGG)
+                    if (self.guidance_model.module.step + 1) % 50 == 0:
+                        self.guidance_model.module.prev_generator_collection.pop(0)
             else:
                 loss_dict = {}
                 log_dict = {} 
